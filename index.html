@@ -605,6 +605,11 @@ const month_=document.getElementById('month'),hour_=document.getElementById('hou
 const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 // on phones, collapse the drawer when an action needs the map (no-op on desktop)
 function closeSide(){const a=document.getElementById('app'); if(a)a.classList.remove('side-open');}
+// reference point for wind/sun/thermal forecast: the live-wind fetch location, else the map center
+function wxRef(){
+  if(windCache && Number.isFinite(windCache.lat)) return [windCache.lat, windCache.lon];
+  try{ const c=map.getCenter(); return [c.lat, c.lng]; }catch(e){ return [CENTER[0], CENTER[1]]; }
+}
 
 // Known airspace features for the Oceanside area (APPROXIMATE — planning only).
 // Airports: hard ring (no-fly without authorization) + caution ring.
@@ -856,7 +861,9 @@ function updateConditions(){
   const Td=windCache.td2m&&Number.isFinite(windCache.td2m[i])?windCache.td2m[i]:null;
   const strength = cape<50?'Dead 🥱':cape<200?'Weak':cape<600?'Moderate':cape<1200?'Strong 🔥':'Booming 🚀';
   const cbaseM = (T!=null&&Td!=null)? Math.max(0,(T-Td)*125) : null;   // Espy cloudbase estimate
-  box.innerHTML='<div class="sim-line"><span>Thermal strength</span><b>'+strength+'</b></div>'
+  const loc = (Number.isFinite(windCache.lat)? windCache.lat.toFixed(2)+', '+windCache.lon.toFixed(2):'—');
+  box.innerHTML='<div class="sim-hint" style="margin-bottom:6px">📍 For the map-view center · '+loc+'</div>'
+    +'<div class="sim-line"><span>Thermal strength</span><b>'+strength+'</b></div>'
     +'<div class="sim-line"><span>CAPE</span><b>'+Math.round(cape)+' J/kg</b></div>'
     +(cbaseM!=null?'<div class="sim-line"><span>Est. cloudbase</span><b>~'+(Math.round(cbaseM*3.281/100)*100)+' ft AGL</b></div>':'')
     +(cc!=null?'<div class="sim-line"><span>Low cloud</span><b>'+Math.round(cc)+'%</b></div>':'');
@@ -865,7 +872,7 @@ function updateConditions(){
 function flyHour(i){
   const spd=windCache.spd10[i], gust=windCache.gust10&&windCache.gust10[i]!=null?windCache.gust10[i]:spd*1.4;
   const t=windCache.time[i]||''; const hr=+t.slice(11,13)||12, mo=+t.slice(5,7)||7;
-  const sun=sunPosition(CENTER[0],CENTER[1],mo,hr);
+  const sun=sunPosition(...wxRef(),mo,hr);
   if(sun.alt<=0) return 0;                          // dark
   if(spd>12||gust>16) return 0.08;                  // too windy
   let s = spd<=6?1 : spd<=9?0.6 : 0.35;
@@ -893,10 +900,12 @@ function updateVerdict(){
   let sub;
   if(bestRun){ sub='Best DLG window today: <b>'+pad2(cells[bestRun.a].hr)+':00–'+pad2((cells[bestRun.b].hr+1)%24)+':00</b>'; }
   else { sub = sc.some(s=>s>=0.35)?'Marginal at best for the next '+N+' h':'Too windy or dark — not great today'; }
+  const loc = Number.isFinite(windCache.lat)? windCache.lat.toFixed(2)+', '+windCache.lon.toFixed(2):'—';
   box.className='verdict v-'+level;
   box.innerHTML='<div class="v-head">'+head+'</div><div class="v-sub">'+sub+'</div>'
     +'<div class="vtl">'+cells.map(c=>'<span class="vc '+(c.s>=0.7?'g':c.s>=0.35?'o':'r')+'" title="'+pad2(c.hr)+':00"></span>').join('')+'</div>'
-    +'<div class="vtl-lbl"><span>'+pad2(cells[0].hr)+':00</span><span>'+(cells.length?pad2(cells[cells.length-1].hr)+':00':'')+'</span></div>';
+    +'<div class="vtl-lbl"><span>'+pad2(cells[0].hr)+':00</span><span>'+(cells.length?pad2(cells[cells.length-1].hr)+':00':'')+'</span></div>'
+    +'<div class="vtl-lbl" style="justify-content:center;margin-top:3px">📍 map-view center · '+loc+'</div>';
 }
 // run the flow solve on a downsampled grid; store coarse fields in WF
 let WF=null;
@@ -948,7 +957,7 @@ function computeBase(){
 // Light step: re-score from cached derivatives when wind / sun / month change
 function rescore(){
   if(!A||!G) return;
-  const sun=sunPosition(CENTER[0],CENTER[1],+month_.value,+hour_.value);
+  const sun=sunPosition(...wxRef(),+month_.value,+hour_.value);
   const n=G.w*G.h;
   const th=new Float32Array(n), sl=new Float32Array(n), cb=new Float32Array(n);
   const lift=new Float32Array(n), rot=new Float32Array(n);
@@ -1324,7 +1333,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.1', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.2', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
@@ -1737,7 +1746,7 @@ function decodePix(r,g,b){
 function drawTile(rec){
   const ctx=rec.tile.getContext('2d');
   const out=ctx.createImageData(256,256);
-  const sun=sunPosition(CENTER[0],CENTER[1],+month_.value,+hour_.value);
+  const sun=sunPosition(...wxRef(),+month_.value,+hour_.value);
   const d=rec.data;
   for(let i=0;i<256*256;i++){
     const r=d[i*4],g=d[i*4+1],b=d[i*4+2],al=d[i*4+3];
@@ -1776,7 +1785,7 @@ function tilePixToLatLng(z,x,y,px,py){
   return [lat,lon];
 }
 function rankFromTiles(){
-  const sun=sunPosition(CENTER[0],CENTER[1],+month_.value,+hour_.value);
+  const sun=sunPosition(...wxRef(),+month_.value,+hour_.value);
   const cands=[];
   for(const k in tileStore){
     const rec=tileStore[k];const{z,x,y}=rec.coords;const d=rec.data;
@@ -1899,20 +1908,35 @@ function setLiveUI(on){
   document.getElementById('liveBox').style.display=on?'block':'none';
   document.getElementById('wspdRow').style.display=on?'none':'flex';
 }
+async function refreshLiveWind(){
+  const c=map.getCenter();
+  await getWindForecast(c.lat, c.lng);                 // forecast for the CURRENT map view, not a fixed point
+  const fh=document.getElementById('fhour');
+  fh.max=String(windCache.time.length-1);
+  fh.value=String(nearestHourIndex(windCache.time));
+}
 document.getElementById('liveWind').addEventListener('change',async e=>{
   if(e.target.checked){
     try{
-      showStatus('Fetching wind forecast…');
-      await getWindForecast(CENTER[0],CENTER[1]);
-      const fh=document.getElementById('fhour');
-      fh.max=String(windCache.time.length-1);
-      fh.value=String(nearestHourIndex(windCache.time));
+      showStatus('Fetching wind forecast for this area…');
+      await refreshLiveWind();
       setLiveUI(true); updateWindLabel(); hideStatus(); onWindChanged();
     }catch(err){
       e.target.checked=false; setLiveUI(false); hideStatus();
       alert('Could not fetch live wind ('+err.message+'). Using the manual dial instead.');
     }
   } else { setLiveUI(false); onWindChanged(); }
+});
+// when live wind is on and you pan to a new area, refresh the forecast for it (cached by ~5 km grid)
+let _wxMoveTimer=null;
+map.on('moveend',()=>{
+  if(!document.getElementById('liveWind').checked || !windCache) return;
+  clearTimeout(_wxMoveTimer);
+  _wxMoveTimer=setTimeout(async()=>{
+    const c=map.getCenter();
+    if(Math.abs(c.lat-windCache.lat)<0.05 && Math.abs(c.lng-windCache.lon)<0.05) return;  // still in the cached cell
+    try{ await refreshLiveWind(); updateWindLabel(); onWindChanged(); }catch(e){}
+  },700);
 });
 document.getElementById('fhour').oninput=()=>{ updateWindLabel(); onWindChanged(); };
 document.getElementById('wspd').oninput=()=>{ document.getElementById('wspdLbl').textContent=document.getElementById('wspd').value+' m/s'; onWindChanged(); };
