@@ -122,6 +122,27 @@
   .group h2 .sub{margin-left:auto;font-weight:500;letter-spacing:0;text-transform:none;color:var(--faint);font-size:11px}
 
   /* ---- segmented control ---- */
+  .acSel{width:100%;background:var(--bg2);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:9px 10px;font-size:13px;font-family:inherit;font-weight:600}
+  .acEdit{margin-top:8px}
+  .acEdit summary{cursor:pointer;font-size:11.5px;color:var(--muted);user-select:none;list-style:none}
+  .acEdit summary::-webkit-details-marker{display:none}
+  .acEdit summary:before{content:'⚙ ';opacity:.8}
+  .acEdit[open] summary{color:var(--text)}
+  .acGrid{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin:9px 0 7px}
+  .acGrid label{display:flex;flex-direction:column;gap:3px;font-size:10.5px;color:var(--muted)}
+  .acGrid input{background:var(--bg2);border:1px solid var(--line);color:var(--text);border-radius:7px;padding:6px 7px;font-size:12.5px;font-family:inherit;width:100%}
+  .bd-wrap{margin-top:7px;border-top:1px solid rgba(255,255,255,.1);padding-top:5px}
+  .bd-wrap>summary{cursor:pointer;font-size:11.5px;color:#7bc5ff;font-weight:600;user-select:none;list-style:none}
+  .bd-wrap>summary::-webkit-details-marker{display:none}
+  .bd h4{margin:8px 0 3px;font-size:11.5px;color:#e8eef5;display:flex;justify-content:space-between;align-items:baseline}
+  .bd h4 small{color:#94a6b8;font-weight:600;font-size:10.5px}
+  .bd-row{display:flex;align-items:center;gap:6px;margin:2.5px 0;font-size:10.5px}
+  .bd-row .l{flex:0 0 96px;color:#94a6b8}
+  .bd-row .bd-bar{flex:1;height:6px;background:rgba(255,255,255,.09);border-radius:3px;overflow:hidden}
+  .bd-row .bd-bar i{display:block;height:100%;border-radius:3px}
+  .bd-row .v{flex:0 0 22px;text-align:right;color:#e8eef5;font-variant-numeric:tabular-nums}
+  .bd-note{margin:4px 0 2px;font-size:10px;color:#b8c4d0;line-height:1.45}
+  .bd-src{margin-top:6px;font-size:9.5px;color:#7e8da0;line-height:1.45}
   .seg{display:flex;gap:3px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:3px;box-shadow:inset 0 1px 3px rgba(0,0,0,.4)}
   .seg button{
     flex:1;background:none;border:none;color:var(--muted);padding:8px 4px;font-size:11.5px;
@@ -448,6 +469,26 @@
       </div>
 
       <div class="group">
+        <h2><span class="step">✈</span> Aircraft</h2>
+        <select id="acClass" class="acSel">
+          <option value="dlg">DLG / HLG (1.0–1.5 m)</option>
+          <option value="thermal">2 m thermal ship</option>
+          <option value="slope">Slope / sloper</option>
+          <option value="large">Large / scale glider</option>
+        </select>
+        <div class="hint" id="acSummary"></div>
+        <details class="acEdit"><summary>Customize my ship</summary>
+          <div class="acGrid">
+            <label>All-up weight (g)<input type="number" id="acAUW" min="50" step="10"></label>
+            <label>Wing area (dm²)<input type="number" id="acArea" min="3" step="1"></label>
+            <label>Slope sweet-spot (°)<input type="number" id="acSlope" min="10" max="60" step="1"></label>
+            <label>Max wind (m/s)<input type="number" id="acWindMax" min="4" max="40" step="1"></label>
+          </div>
+          <button class="ghost mini" id="acReset" type="button">↺ Reset to preset</button>
+        </details>
+      </div>
+
+      <div class="group">
         <h2><span class="step">3</span> Wind</h2>
         <label class="row" style="margin:0 0 6px"><span>Use live wind (Open-Meteo)</span>
           <input type="checkbox" id="liveWind" checked></label>
@@ -631,6 +672,23 @@ function wxRef(){
 }
 // LIVE map-center coords for display labels — tracks every pan (unlike the cached forecast point)
 function centerLabel(){ try{ const c=map.getCenter(); return c.lat.toFixed(3)+', '+c.lng.toFixed(3); }catch(e){ return '—'; } }
+
+// ============================ AIRCRAFT PROFILES ============================
+// area in dm²; these tune the flight estimate + slope sweet-spot + rotor tolerance + wind range.
+const AIRCRAFT={
+  dlg:     {label:'DLG / HLG',      auw:300,  area:22, CLmax:1.2, slopeSweet:26, rotorTol:0.80, ballastMax:60,   windMax:12},
+  thermal: {label:'2 m thermal',    auw:900,  area:40, CLmax:1.1, slopeSweet:28, rotorTol:0.60, ballastMax:200,  windMax:15},
+  slope:   {label:'Slope / sloper', auw:1200, area:36, CLmax:1.0, slopeSweet:35, rotorTol:0.45, ballastMax:400,  windMax:22},
+  large:   {label:'Large / scale',  auw:4000, area:70, CLmax:1.1, slopeSweet:30, rotorTol:0.30, ballastMax:1000, windMax:25}
+};
+let AC=Object.assign({class:'dlg'}, AIRCRAFT.dlg);
+function loadAircraft(){
+  try{ const s=JSON.parse(localStorage.getItem('dlgAircraft')||'null');
+    if(s && s.class && AIRCRAFT[s.class]) AC=Object.assign({class:s.class}, AIRCRAFT[s.class], s.over||{}); }catch(e){}
+}
+function saveAircraft(){ try{ localStorage.setItem('dlgAircraft',JSON.stringify({class:AC.class,
+  over:{auw:AC.auw,area:AC.area,CLmax:AC.CLmax,slopeSweet:AC.slopeSweet,rotorTol:AC.rotorTol,ballastMax:AC.ballastMax,windMax:AC.windMax}})); }catch(e){} }
+loadAircraft();
 
 // Known airspace features for the Oceanside area (APPROXIMATE — planning only).
 // Airports: hard ring (no-fly without authorization) + caution ring.
@@ -843,22 +901,22 @@ function currentWind(){
 function updateSim(){
   const box=document.getElementById('simBox'); if(!box)return;
   const w=currentWind(), spd=w.speed||0, gust=w.gust!=null?w.gust:spd*1.4;
-  const baseAUW=260, S=0.22, rho=1.225, CLmax=1.2;        // reference 1.5 m DLG (cambered airfoil)
+  const baseAUW=AC.auw, S=AC.area/100, rho=1.225, CLmax=AC.CLmax;   // active aircraft profile
   const Vstall=Math.sqrt(2*(baseAUW/1000*9.81)/S/(rho*CLmax));
-  const Vbg=1.3*Vstall;                                    // best-glide ~5 m/s (unballasted)
-  // ballast only matters once gusts approach best-glide speed; realistic DLG cap ~+60 g
-  const ballast=Math.max(0, Math.min(60, Math.round((gust-5)*1.2)*5));
+  const Vbg=1.3*Vstall;                                    // best-glide speed (unballasted)
+  // ballast ramps in as gusts approach this aircraft's max wind; capped at the profile's ballastMax
+  const ballast=Math.max(0, Math.min(AC.ballastMax, Math.round((gust-5)/Math.max(1,AC.windMax-5)*AC.ballastMax/5)*5));
   const reqAUW=baseAUW+ballast;
   const penSpd=Vbg*Math.sqrt(reqAUW/baseAUW);              // ballasted best-glide speed
   const outrun=penSpd<gust;                                // gust may park you upwind
   const liftMS = WF ? WF.liftMax : spd*0.42;               // modeled orographic lift, else estimate
   const minSink=0.45*Math.sqrt(reqAUW/baseAUW);
   const climbFpm=Math.round(Math.max(0,liftMS-minSink)*196.85/10)*10;
-  let verdict;
-  if(spd<2) verdict="Dead air — thumbs only, it's a launch-height day. 🥱";
-  else if(spd<4) verdict="Light & floaty — go minimum weight and milk every bump.";
-  else if(spd<7) verdict="Working breeze — nominal ballast, nice slope lift.";
-  else if(spd<10) verdict="It's honking — ballast up for penetration. 💪";
+  let verdict; const wf=AC.windMax/12;   // scale the breeze brackets to this aircraft
+  if(spd<2*wf) verdict="Dead air — thumbs only, it's a launch-height day. 🥱";
+  else if(spd<4*wf) verdict="Light & floaty — go minimum weight and milk every bump.";
+  else if(spd<7*wf) verdict="Working breeze — nominal ballast, nice slope lift.";
+  else if(spd<10*wf) verdict="It's honking — ballast up for penetration. 💪";
   else verdict="Survival mode — maybe fly the foamie today. 😬";
   if(outrun) verdict+=' ⚠ Gusts can out-run you upwind — stay out front.';
   box.innerHTML='<div class="sim-line"><span>Recommended ballast</span><b>'+(ballast>0?('+'+ballast+' g'):'none / min')+'</b></div>'
@@ -906,9 +964,10 @@ function flyHour(i){
   const t=windCache.time[i]||''; const hr=+t.slice(11,13)||12, mo=+t.slice(5,7)||7;
   const sun=sunPosition(...wxRef(),mo,hr);
   if(sun.alt<=0) return 0;                          // dark
-  if(spd>12||gust>16) return 0.08;                  // too windy
-  let s = spd<=6?1 : spd<=9?0.6 : 0.35;
-  if(gust>12) s*=0.6;
+  const mx=AC.windMax;                              // this aircraft's wind ceiling
+  if(spd>mx||gust>mx+4) return 0.08;                // too windy for this ship
+  let s = spd<=mx*0.5?1 : spd<=mx*0.75?0.6 : 0.35;
+  if(gust>mx) s*=0.6;
   return s;
 }
 function pad2(h){return (h<10?'0':'')+h;}
@@ -1018,7 +1077,7 @@ function rescore(){
       lift[i]=Math.min(1, liftN*(0.5+0.5*spd/Math.max(0.1,WF.ambient))); // lift incl. speed-up
       rot[i]=rotorN;
       // slope soaring: modeled lift, knocked down by lee rotor
-      l=Math.min(1, 0.45*l + 0.55*liftN) * (1-0.8*rotorN);
+      l=Math.min(1, 0.45*l + 0.55*liftN) * (1-AC.rotorTol*rotorN);
       // thermals: convergence helps, rotor/strong sink hurt
       t=Math.min(1, t*(1+0.6*convN)*(1-0.5*rotorN));
       if(wv<0) t*=Math.max(0.45, 1 - 0.3*Math.min(1,(-wv)/(WF.ambient+1e-6)));
@@ -1101,7 +1160,7 @@ function rankSpots(){
       if(arr[idx(r+dr,c+dc,w,h)]>v+1e-4){isMax=false;break;}
     }
     if(!isMax)continue;
-    cands.push({v,lat,lon,air:airspaceStatus(lat,lon),slopeDeg:A.slopeDeg[k],aspect:A.aspect[k],
+    cands.push({v,lat,lon,k,air:airspaceStatus(lat,lon),slopeDeg:A.slopeDeg[k],aspect:A.aspect[k],
       isSlope:A.slope[k]>=A.thermal[k],thermal:A.thermal[k],slope:A.slope[k],
       rotor:A.rotor?A.rotor[k]:0,dist:haversine(CENTER[0],CENTER[1],lat,lon)});
   }
@@ -1132,7 +1191,8 @@ function drawSpots(top){
         +'Slope '+s.slopeDeg.toFixed(0)+'°, faces '+compass(s.aspect)+' ('+s.aspect.toFixed(0)+'°)<br>'
         +(s.isSlope?('Best wind <b>from '+compass(s.aspect)+'</b><br>'):'Sun-heated trigger point<br>')
         +'Airspace: <b>'+s.air.level+'</b> — '+s.air.reason+'<br>'
-        +s.lat.toFixed(5)+', '+s.lon.toFixed(5));
+        +s.lat.toFixed(5)+', '+s.lon.toFixed(5)
+        +(s.k!=null?'<details class="bd-wrap"><summary>🔍 Why this score</summary>'+explainCell(s.k)+'</details>':''),{maxWidth:300});
     const badge=()=>marker._icon&&marker._icon.querySelector('.num-marker');
     // is the current wind blowing onto this face? (only meaningful for slope spots)
     const al=Math.cos((s.aspect-WIND)*Math.PI/180);
@@ -1374,7 +1434,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.6', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.7', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
@@ -1774,11 +1834,53 @@ function scoreDeriv(slopeDeg,aspectDeg,tpi,sun,windFrom,mode){
   const dayF = sun.alt>3 ? 1 : (sun.alt>0 ? 0.5 : 0.12);
   const thermal=(0.6*insol+0.3*release+0.1*gentle)*dayF;
   let align=Math.max(0,Math.cos(aR-windFrom*Math.PI/180));
-  const steep=Math.exp(-((slopeDeg-28)**2)/(2*144));
+  const steep=Math.exp(-((slopeDeg-(typeof AC!=='undefined'?AC.slopeSweet:28))**2)/(2*144));
   let slope=align*(0.55*steep+0.45*release);
   if(slopeDeg<6)slope*=0.2;
   const combined=Math.max(thermal*0.95,slope);
   return mode==='thermal'?thermal:mode==='slope'?slope:combined;
+}
+
+// ---- Behind the curtain: explain how a cell's thermal & slope scores are built ----
+// Mirrors scoreDeriv() + the model blend in rescore(). Single-cell, so the duplication is cheap.
+function bdRow(label,frac,color){
+  const pct=Math.round(Math.max(0,Math.min(1,frac))*100);
+  return '<div class="bd-row"><span class="l">'+label+'</span><div class="bd-bar"><i style="width:'+pct+'%;background:'+color+'"></i></div><span class="v">'+pct+'</span></div>';
+}
+function explainCell(i){
+  const s=A.slopeDeg[i], a=A.aspect[i], tp=A.tpi[i];
+  const sun=A.sun||sunPosition(...wxRef(),+month_.value,+hour_.value);
+  const sR=s*Math.PI/180,aR=a*Math.PI/180,sunAltR=sun.alt*Math.PI/180,sunAzR=sun.az*Math.PI/180;
+  let insol=0; if(sun.alt>0) insol=Math.max(0,Math.cos(sR)*Math.sin(sunAltR)+Math.sin(sR)*Math.cos(sunAltR)*Math.cos(sunAzR-aR));
+  const release=Math.max(0,Math.tanh(tp/TPI_SCALE));
+  const gentle=Math.exp(-((s-12)**2)/(2*144));
+  const dayF=sun.alt>3?1:(sun.alt>0?0.5:0.12);
+  const align=Math.max(0,Math.cos(aR-WIND*Math.PI/180));
+  const steep=Math.exp(-((s-AC.slopeSweet)**2)/(2*144));
+  const TERR='#7bc5ff', SUN='#ffd66b', MOD='#c08bff', HAZ='#ef5e6b';
+  // ---- THERMAL trigger (terrain + sun) ----
+  let h='<div class="bd"><h4>🔥 Thermal trigger <small>'+(A.thermal[i]*100|0)+'/100</small></h4>';
+  h+=bdRow('Sun on face ×.6',insol,SUN)+bdRow('Convex release ×.3',release,TERR)+bdRow('Gentle ground ×.1',gentle,TERR);
+  h+='<div class="bd-note">Daylight gate: <b>'+Math.round(dayF*100)+'%</b> (sun '+(sun.alt>0?'+'+sun.alt.toFixed(0)+'° up':'below horizon')+')</div>';
+  // ---- SLOPE-SOARING face (terrain shape + wind model) ----
+  h+='<h4>⛰ Slope-soaring face <small>'+(A.slope[i]*100|0)+'/100</small></h4>';
+  h+=bdRow('Faces the wind',align,TERR)+bdRow('Steepness fit ('+AC.slopeSweet+'°)',steep,TERR)+bdRow('Convex release',release,TERR);
+  if(WF){
+    const r=(i/G.w)|0,c=i%G.w;
+    const liftN=Math.max(0,sampleWF(WF.F.wvel,r,c))/WF.liftMax;
+    const rotorN=Math.min(1,sampleWF(WF.F.rotor,r,c)/WF.rotMax);
+    const slopeBase=align*(0.55*steep+0.45*release)*(s<6?0.2:1);
+    const baseTerm=0.45*slopeBase, liftTerm=0.55*liftN, denom=baseTerm+liftTerm||1;
+    const modelShare=Math.round(liftTerm/denom*100), rotorCut=Math.round(AC.rotorTol*rotorN*100);
+    h+=bdRow('Modeled lift',liftN,MOD)+(rotorN>0.02?bdRow('Lee rotor (−)',rotorN,HAZ):'');
+    h+='<div class="bd-note"><b style="color:'+MOD+'">Model reliance:</b> ~'+modelShare+'% of the slope score is the diagnostic wind model'
+      +(rotorCut>0?', then lee rotor trims '+rotorCut+'%':'')+'. The rest is terrain shape.</div>';
+  } else {
+    h+='<div class="bd-note">Wind model <b>off</b> — slope score is terrain geometry only. Turn on live wind to fold in modeled lift &amp; rotor.</div>';
+  }
+  h+='<div class="bd-src">Sources: <b style="color:'+TERR+'">terrain</b> from DEM (slope/aspect/convexity) · '
+    +'<b style="color:'+SUN+'">sun</b> astronomical · <b style="color:'+MOD+'">wind</b> = diagnostic flow model, <i>not measured turbulence</i>. Plan, then verify at the field.</div></div>';
+  return h;
 }
 function decodePix(r,g,b){
   return {slopeDeg:r*SLOPE_MAX/255, aspectDeg:g*360/255,
@@ -1994,6 +2096,33 @@ document.getElementById('modeSeg').addEventListener('click',e=>{
   if(tileLayer){redrawTiles();rankFromTiles();}        // mode only re-renders, no recompute
   else if(A){renderOverlay();rankSpots();}
 });
+
+// ---- Aircraft profile picker (tunes flight estimate, slope sweet-spot, rotor tolerance, wind range) ----
+function acFillInputs(){
+  const wl=(AC.auw/AC.area).toFixed(1);
+  document.getElementById('acClass').value=AC.class;
+  document.getElementById('acAUW').value=Math.round(AC.auw);
+  document.getElementById('acArea').value=AC.area;
+  document.getElementById('acSlope').value=AC.slopeSweet;
+  document.getElementById('acWindMax').value=AC.windMax;
+  document.getElementById('acSummary').textContent=
+    wl+' g/dm² wing loading · slope sweet-spot '+AC.slopeSweet+'° · usable to ~'+AC.windMax+' m/s ('+Math.round(AC.windMax*1.94)+' kt)';
+}
+function applyAircraft(){ saveAircraft(); acFillInputs(); onParamsChanged(); updateSim(); updateVerdict(); }
+document.getElementById('acClass').addEventListener('change',e=>{
+  AC=Object.assign({class:e.target.value}, AIRCRAFT[e.target.value]); applyAircraft();
+});
+[['acAUW','auw',30,1e5],['acArea','area',3,400],['acSlope','slopeSweet',8,60],['acWindMax','windMax',4,40]].forEach(([id,key,lo,hi])=>{
+  document.getElementById(id).addEventListener('input',()=>{
+    const v=parseFloat(document.getElementById(id).value); if(!isFinite(v))return;
+    AC[key]=Math.max(lo,Math.min(hi,v));
+    saveAircraft();
+    document.getElementById('acSummary').textContent=(AC.auw/AC.area).toFixed(1)+' g/dm² wing loading · slope sweet-spot '+AC.slopeSweet+'° · usable to ~'+AC.windMax+' m/s';
+    onParamsChanged(); updateSim(); updateVerdict();
+  });
+});
+document.getElementById('acReset').addEventListener('click',()=>{ AC=Object.assign({class:AC.class}, AIRCRAFT[AC.class]); applyAircraft(); });
+acFillInputs();
 month_.oninput=()=>{document.getElementById('moLbl').textContent=MONTHS[month_.value-1];onParamsChanged();};
 hour_.oninput=()=>{document.getElementById('hrLbl').textContent=(hour_.value<10?'0':'')+hour_.value+':00';onParamsChanged();};
 op_.oninput=()=>{document.getElementById('opLbl').textContent=op_.value+'%';if(overlay)overlay.setOpacity(+op_.value/100);if(tileLayer)tileLayer.setOpacity(+op_.value/100);};
@@ -2068,12 +2197,13 @@ map.on('click',e=>{
       +'Wind: '+compass(WF.fromDeg)+' @ '+WF.speed.toFixed(1)+' m/s<br>';
   }
   const airCol=air.level==='restricted'?'#ef5e6b':air.level==='caution'?'#f5b942':'#2fd49a';
-  L.popup().setLatLng(e.latlng).setContent(
+  L.popup({maxWidth:300}).setLatLng(e.latlng).setContent(
     '<b>Spot readout</b><br>'
     +'Thermal '+(A.thermal[k]*100|0)+'/100 · Slope '+(A.slope[k]*100|0)+'/100<br>'
     +'Slope '+A.slopeDeg[k].toFixed(0)+'°, faces '+compass(A.aspect[k])+' ('+A.aspect[k].toFixed(0)+'°)<br>'
     +windLine
     +'Airspace: <b style="color:'+airCol+'">'+air.level.toUpperCase()+'</b> — '+air.reason
+    +'<details class="bd-wrap"><summary>🔍 Why this score</summary>'+explainCell(k)+'</details>'
   ).openOn(map);
 });
 
