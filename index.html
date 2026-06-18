@@ -1,0 +1,2000 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>DLG Thermal &amp; Slope Finder — Oceanside (92057)</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/geotiff@2.1.3/dist-browser/geotiff.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.11.0/proj4.js"></script>
+<style>
+  :root{
+    --bg:#0b0f16; --bg2:#070a10;
+    --panel:#111824; --panel2:#19222f; --panel3:#1f2a39;
+    --line:#27313f; --line-soft:#1d2530;
+    --text:#e8eef5; --muted:#94a6b8; --faint:#6b7c8e;
+    --accent:#4ea1ff; --accent-2:#7bc5ff; --accent-deep:#1c5fb0; --ink:#04121f;
+    --good:#2fd49a; --warn:#f5b942; --bad:#ef5e6b;
+    --radius:12px; --radius-sm:9px;
+    --shadow:0 6px 18px -8px rgba(0,0,0,.55), 0 1px 0 rgba(255,255,255,.02) inset;
+    --mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;font-family:'Inter',-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  #app{display:flex;height:100vh;overflow:hidden}
+  #side{
+    width:356px;min-width:356px;display:flex;flex-direction:column;overflow:hidden;
+    background:linear-gradient(180deg,#131c29 0%, #0e1521 100%);
+    border-right:1px solid var(--line);
+    box-shadow:1px 0 0 rgba(255,255,255,.03), 14px 0 40px -24px rgba(0,0,0,.7);
+    position:relative;z-index:1;
+  }
+  #mapwrap{position:relative;flex:1;height:100vh}
+  #map{position:absolute;top:0;left:0;right:0;bottom:0;height:100%;width:100%;background:var(--bg2)}
+  #menuBtn{display:none;position:fixed;top:12px;left:12px;z-index:1600;width:44px;height:44px;border-radius:12px;
+    border:1px solid var(--line);background:var(--panel2);color:var(--text);align-items:center;justify-content:center;
+    font-size:19px;box-shadow:var(--shadow);cursor:pointer}
+  #sideBackdrop{display:none;position:absolute;inset:0;background:rgba(0,0,0,.5);z-index:1400}
+  #reticle{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1150;pointer-events:none;color:var(--accent-2);font-size:26px;text-shadow:0 0 6px rgba(0,0,0,.8),0 0 2px #000;font-weight:700}
+  #placeHere{display:none;position:absolute;bottom:18px;left:50%;transform:translateX(-50%);z-index:1150;border:none;border-radius:11px;padding:11px 18px;font-size:13px;font-weight:700;color:var(--ink);background:linear-gradient(180deg,var(--accent-2),var(--accent));box-shadow:0 8px 22px -8px rgba(78,161,255,.8),var(--shadow);cursor:pointer}
+  /* ---- phone / narrow screens: panel becomes a slide-in drawer over the map ---- */
+  @media (max-width:760px){
+    #menuBtn{display:flex}
+    #side{position:absolute;top:0;left:0;bottom:0;height:100vh;width:86vw;max-width:360px;min-width:0;
+      transform:translateX(-103%);transition:transform .25s ease;z-index:1500;box-shadow:0 0 60px rgba(0,0,0,.65)}
+    #app.side-open #side{transform:translateX(0)}
+    #app.side-open #sideBackdrop{display:block}
+    #mapwrap{width:100vw}
+    header{padding-left:62px}            /* clear the hamburger */
+    #helpBtn{bottom:auto;top:12px;right:12px}
+    .leaflet-top.leaflet-left{top:60px}  /* push zoom control below the hamburger */
+  }
+
+  /* ---- header / brand lockup ---- */
+  header{
+    padding:18px 18px 16px;
+    border-bottom:1px solid var(--line);
+    background:
+      radial-gradient(120% 140% at 0% 0%, rgba(78,161,255,.12), transparent 60%),
+      linear-gradient(180deg, rgba(255,255,255,.02), transparent);
+    position:relative;
+  }
+  header::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:1px;
+    background:linear-gradient(90deg,transparent,rgba(78,161,255,.5),transparent)}
+  .brand{display:flex;align-items:center;gap:12px}
+  .brand .logo{
+    flex:0 0 auto;width:42px;height:42px;border-radius:11px;
+    display:flex;align-items:center;justify-content:center;
+    background:linear-gradient(160deg,#1d3654,#0e1d30);
+    border:1px solid rgba(78,161,255,.35);
+    box-shadow:0 4px 14px -6px rgba(78,161,255,.5), inset 0 1px 0 rgba(255,255,255,.08);
+  }
+  .brand .logo svg{display:block}
+  header h1{font-size:15.5px;line-height:1.15;margin:0 0 3px;font-weight:700;letter-spacing:-.01em}
+  header h1 .em{color:var(--accent-2)}
+  header p{margin:0;font-size:11px;color:var(--muted);line-height:1.4}
+  header .pin{color:var(--accent-2);font-weight:600}
+
+  .scroll{overflow-y:auto;overflow-x:hidden;padding:16px 16px 22px;flex:1;scrollbar-width:thin;scrollbar-color:#2c3a49 transparent}
+  .scroll::-webkit-scrollbar{width:9px}
+  .scroll::-webkit-scrollbar-thumb{background:#26303d;border-radius:9px;border:2px solid transparent;background-clip:padding-box}
+  .scroll::-webkit-scrollbar-thumb:hover{background:#33485d;background-clip:padding-box}
+
+  /* ---- section grouping ---- */
+  .group{
+    margin-bottom:14px;padding:14px;border-radius:var(--radius);
+    background:linear-gradient(180deg,rgba(255,255,255,.022),rgba(255,255,255,0));
+    border:1px solid var(--line-soft);
+  }
+  .group h2{
+    display:flex;align-items:center;gap:8px;
+    font-size:11px;text-transform:uppercase;letter-spacing:.11em;color:var(--muted);
+    margin:0 0 12px;font-weight:700;
+  }
+  .group h2 .step{
+    flex:0 0 auto;display:inline-flex;align-items:center;justify-content:center;
+    width:19px;height:19px;border-radius:6px;font-size:11px;font-weight:700;
+    color:var(--accent-2);background:rgba(78,161,255,.13);border:1px solid rgba(78,161,255,.25);
+    font-family:var(--mono);
+  }
+  .group h2 .ico{color:var(--faint);display:inline-flex}
+  .group h2 .sub{margin-left:auto;font-weight:500;letter-spacing:0;text-transform:none;color:var(--faint);font-size:11px}
+
+  /* ---- segmented control ---- */
+  .seg{display:flex;gap:3px;background:var(--bg2);border:1px solid var(--line);border-radius:10px;padding:3px;box-shadow:inset 0 1px 3px rgba(0,0,0,.4)}
+  .seg button{
+    flex:1;background:none;border:none;color:var(--muted);padding:8px 4px;font-size:11.5px;
+    font-weight:600;cursor:pointer;border-radius:7px;font-family:inherit;letter-spacing:.01em;
+    transition:background .15s,color .15s,box-shadow .15s;
+  }
+  .seg button:hover{color:var(--text);background:rgba(255,255,255,.04)}
+  .seg button.active{
+    background:linear-gradient(180deg,var(--accent-2),var(--accent));color:var(--ink);font-weight:700;
+    box-shadow:0 2px 8px -2px rgba(78,161,255,.6), inset 0 1px 0 rgba(255,255,255,.4);
+  }
+
+  /* ---- rows / labels ---- */
+  label.row{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;margin:11px 0;color:var(--text);gap:10px;font-weight:500}
+  label.row:first-child{margin-top:0}
+  .val{color:var(--accent-2);font-family:var(--mono);font-size:12px;font-weight:600;font-variant-numeric:tabular-nums;
+    background:rgba(78,161,255,.1);border:1px solid rgba(78,161,255,.2);padding:2px 8px;border-radius:6px;white-space:nowrap}
+
+  /* ---- range sliders ---- */
+  input[type=range]{
+    width:160px;-webkit-appearance:none;appearance:none;height:18px;background:transparent;cursor:pointer;margin:0;
+  }
+  input[type=range]::-webkit-slider-runnable-track{height:5px;border-radius:5px;
+    background:linear-gradient(90deg,var(--accent-deep),var(--accent) 60%, #2a3744 60%);background:#2a3744}
+  input[type=range]::-moz-range-track{height:5px;border-radius:5px;background:#2a3744}
+  input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:16px;height:16px;border-radius:50%;margin-top:-5.5px;
+    background:radial-gradient(circle at 35% 30%,#fff,var(--accent-2) 45%,var(--accent));
+    border:1px solid var(--accent-deep);box-shadow:0 1px 4px rgba(0,0,0,.5),0 0 0 3px rgba(78,161,255,.14)}
+  input[type=range]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;
+    background:radial-gradient(circle at 35% 30%,#fff,var(--accent-2) 45%,var(--accent));
+    border:1px solid var(--accent-deep);box-shadow:0 1px 4px rgba(0,0,0,.5),0 0 0 3px rgba(78,161,255,.14)}
+  input[type=range]:hover::-webkit-slider-thumb{box-shadow:0 1px 4px rgba(0,0,0,.5),0 0 0 4px rgba(78,161,255,.22)}
+
+  /* ---- checkboxes ---- */
+  input[type=checkbox]{
+    -webkit-appearance:none;appearance:none;width:38px;height:21px;border-radius:11px;cursor:pointer;
+    background:#222d3b;border:1px solid var(--line);position:relative;flex:0 0 auto;transition:background .18s,border-color .18s;
+  }
+  input[type=checkbox]::after{content:"";position:absolute;top:2px;left:2px;width:15px;height:15px;border-radius:50%;
+    background:#8497aa;box-shadow:0 1px 2px rgba(0,0,0,.5);transition:transform .18s,background .18s}
+  input[type=checkbox]:checked{background:linear-gradient(180deg,var(--accent-2),var(--accent));border-color:var(--accent-deep)}
+  input[type=checkbox]:checked::after{transform:translateX(17px);background:#fff}
+
+  /* ---- wind dial container ---- */
+  .windwrap{
+    display:flex;align-items:center;gap:14px;padding:12px;border-radius:var(--radius-sm);
+    background:radial-gradient(110% 120% at 0% 0%, rgba(78,161,255,.08), transparent 55%), var(--bg2);
+    border:1px solid var(--line);box-shadow:inset 0 1px 3px rgba(0,0,0,.4);
+  }
+  #windDial{width:90px;height:90px;flex:0 0 auto;border-radius:50%;
+    background:radial-gradient(circle at 50% 42%, #16202d, #0a1019 78%);
+    border:1px solid var(--line);box-shadow:inset 0 2px 8px rgba(0,0,0,.6), 0 0 0 4px rgba(78,161,255,.05)}
+
+  /* ---- buttons ---- */
+  button.act{
+    width:100%;border:none;border-radius:10px;padding:11px;font-size:12.5px;font-weight:700;cursor:pointer;
+    font-family:inherit;letter-spacing:.01em;margin-top:4px;
+    background:linear-gradient(180deg,var(--accent-2),var(--accent));color:var(--ink);
+    box-shadow:0 4px 14px -4px rgba(78,161,255,.5), inset 0 1px 0 rgba(255,255,255,.35);
+    transition:transform .08s, box-shadow .15s, filter .15s;
+  }
+  button.act:hover{filter:brightness(1.06);box-shadow:0 6px 18px -4px rgba(78,161,255,.6), inset 0 1px 0 rgba(255,255,255,.4)}
+  button.act:active{transform:translateY(1px)}
+  button.act.alt{
+    background:linear-gradient(180deg,var(--panel3),var(--panel2));color:var(--text);
+    border:1px solid var(--line);box-shadow:0 2px 8px -4px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.04);
+  }
+  button.act.alt:hover{filter:none;border-color:#3a4d62;background:linear-gradient(180deg,#243140,var(--panel2))}
+  button.act:disabled{opacity:.45;cursor:default;filter:none;transform:none}
+
+  /* ---- details / advanced ---- */
+  details summary{list-style:none;outline:none}
+  details summary::-webkit-details-marker{display:none}
+  details summary::before{content:"▸";display:inline-block;margin-right:6px;color:var(--accent-2);transition:transform .18s;font-size:10px}
+  details[open] summary::before{transform:rotate(90deg)}
+
+  #drop{border:1.5px dashed var(--line);border-radius:var(--radius-sm);padding:16px 12px;text-align:center;font-size:11px;color:var(--muted);cursor:pointer;background:rgba(255,255,255,.015);transition:border-color .15s,color .15s,background .15s}
+  #drop:hover{border-color:#3a4d62;color:var(--text)}
+  #drop.hover{border-color:var(--accent);color:var(--text);background:rgba(78,161,255,.08)}
+
+  /* ---- spot cards ---- */
+  .spot{
+    position:relative;background:linear-gradient(180deg,var(--panel2),#151e2a);
+    border:1px solid var(--line);border-radius:var(--radius-sm);padding:11px 13px 12px 15px;margin-bottom:9px;
+    cursor:pointer;font-size:12px;overflow:hidden;
+    transition:border-color .16s ease,transform .14s cubic-bezier(.2,.8,.3,1),box-shadow .16s ease,background .16s ease;
+  }
+  .spot::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:linear-gradient(180deg,var(--accent-2),var(--accent));opacity:.55;transition:width .16s ease,opacity .16s ease,box-shadow .16s ease}
+  .spot:hover{
+    border-color:var(--accent);transform:translateX(3px);
+    background:linear-gradient(180deg,#1b2738,#161f2c);
+    box-shadow:0 10px 26px -14px rgba(78,161,255,.75), 0 0 0 1px rgba(78,161,255,.14);
+  }
+  .spot:hover::before{width:4px;opacity:1;box-shadow:0 0 14px rgba(78,161,255,.7)}
+  .spot:active{transform:translateX(3px) scale(.992)}
+  /* header row: rank + title + score */
+  .spot .shead{display:flex;align-items:center;gap:8px}
+  .spot .rank{
+    display:inline-flex;width:23px;height:23px;border-radius:8px;flex:0 0 auto;
+    background:linear-gradient(180deg,var(--accent-2),var(--accent));color:var(--ink);
+    font-weight:800;align-items:center;justify-content:center;font-size:12px;font-family:var(--mono);
+    box-shadow:0 2px 6px -2px rgba(78,161,255,.6), inset 0 1px 0 rgba(255,255,255,.4);
+    transition:transform .14s ease,box-shadow .14s ease;
+  }
+  .spot:hover .rank{transform:scale(1.06);box-shadow:0 3px 10px -2px rgba(78,161,255,.85), inset 0 1px 0 rgba(255,255,255,.5)}
+  .spot .ttl{font-weight:700;font-size:12.5px;letter-spacing:-.01em;flex:1 1 auto;min-width:0}
+  /* score readout, mono, prominent number */
+  .spot .score{display:inline-flex;align-items:baseline;gap:3px;flex:0 0 auto;font-family:var(--mono);
+    padding:2px 8px 2px 9px;border-radius:7px;background:rgba(78,161,255,.08);border:1px solid rgba(78,161,255,.2)}
+  .spot .score .num{font-size:15px;font-weight:800;color:var(--accent-2);font-variant-numeric:tabular-nums;line-height:1}
+  .spot .score .den{font-size:9px;font-weight:600;color:var(--faint);letter-spacing:.02em}
+  .spot .tags{display:flex;flex-wrap:wrap;gap:5px;margin-top:9px}
+  .spot .meta{color:var(--muted);margin-top:8px;line-height:1.6;font-size:11.5px}
+  .spot .meta b{color:var(--text);font-weight:600}
+  .spot .reason{display:block;color:var(--faint);margin-top:5px;font-size:11px;line-height:1.55}
+  .tag{display:inline-flex;align-items:center;padding:2px 8px;border-radius:999px;font-size:9.5px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;border:1px solid transparent}
+  .tag.thermal{background:rgba(245,185,66,.15);color:var(--warn);border-color:rgba(245,185,66,.3)}
+  .tag.slope{background:rgba(78,161,255,.16);color:var(--accent-2);border-color:rgba(78,161,255,.32)}
+  .tag.clear{background:rgba(47,212,154,.15);color:var(--good);border-color:rgba(47,212,154,.3)}
+  .tag.caution{background:rgba(245,185,66,.15);color:var(--warn);border-color:rgba(245,185,66,.3)}
+  .tag.restricted{background:rgba(239,94,107,.15);color:var(--bad);border-color:rgba(239,94,107,.32)}
+
+  /* ---- legend ---- */
+  .legend{font-size:11.5px;color:var(--muted);line-height:1.65}
+  .legbar{height:11px;border-radius:6px;margin:6px 0;background:linear-gradient(90deg,#2c3a49,#2fd49a,#7d4,#fd4,#f73);box-shadow:inset 0 1px 2px rgba(0,0,0,.4),0 0 0 1px rgba(255,255,255,.04)}
+  .legend .scale{display:flex;justify-content:space-between;font-size:10px;color:var(--faint);text-transform:uppercase;letter-spacing:.08em;font-weight:600}
+  .legend .lrow{margin-top:11px;padding-top:11px;border-top:1px solid var(--line-soft)}
+
+  /* ---- safety disclaimer ---- */
+  .disc{
+    font-size:10.5px;color:var(--muted);line-height:1.6;margin-top:12px;padding:12px;border-radius:var(--radius-sm);
+    background:linear-gradient(180deg,rgba(245,185,66,.06),rgba(245,185,66,.02));
+    border:1px solid rgba(245,185,66,.22);border-left:3px solid var(--warn);
+  }
+  .disc b{color:var(--warn)}
+  .disc .dh{display:flex;align-items:center;gap:7px;font-size:11px;font-weight:700;color:var(--warn);text-transform:uppercase;letter-spacing:.08em;margin-bottom:6px}
+
+  #status{position:absolute;top:14px;left:50%;transform:translateX(-50%);z-index:1000;
+    background:rgba(12,17,24,.94);backdrop-filter:blur(8px);border:1px solid var(--line);
+    border-radius:10px;padding:9px 16px;font-size:12px;font-weight:500;display:none;
+    box-shadow:0 8px 24px -8px rgba(0,0,0,.7)}
+  .leaflet-popup-content{font-size:12px;line-height:1.55}
+  .leaflet-popup-content-wrapper{background:#131c29;color:var(--text);border-radius:10px;box-shadow:0 10px 30px -8px rgba(0,0,0,.7);border:1px solid var(--line)}
+  .leaflet-popup-tip{background:#131c29;border:1px solid var(--line)}
+  .leaflet-popup-content b{color:var(--accent-2)}
+  .leaflet-container a.leaflet-popup-close-button{color:var(--muted)}
+  .leaflet-bar a,.leaflet-bar a:hover{background:#131c29;color:var(--text);border-bottom-color:var(--line)}
+  .leaflet-bar{border:1px solid var(--line);box-shadow:0 4px 14px -6px rgba(0,0,0,.6)}
+  .num-marker{background:linear-gradient(180deg,var(--accent-2),var(--accent));color:var(--ink);border-radius:50%;width:25px;height:25px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12px;border:2px solid var(--ink);box-shadow:0 2px 8px -2px rgba(0,0,0,.7),0 0 0 1px rgba(78,161,255,.5);font-family:var(--mono);transition:transform .16s cubic-bezier(.2,.9,.3,1.3),box-shadow .16s ease,border-color .16s ease}
+  .num-marker.hl{transform:scale(1.55) translateY(-2px);border-color:#fff;
+    box-shadow:0 0 0 4px rgba(78,161,255,.55), 0 0 0 9px rgba(78,161,255,.18), 0 12px 22px -5px rgba(0,0,0,.8), 0 0 18px rgba(123,197,255,.65);
+    z-index:1000;animation:pinPulse 1.6s ease-in-out infinite}
+  @keyframes pinPulse{
+    0%,100%{box-shadow:0 0 0 4px rgba(78,161,255,.55), 0 0 0 9px rgba(78,161,255,.18), 0 12px 22px -5px rgba(0,0,0,.8), 0 0 18px rgba(123,197,255,.65)}
+    50%{box-shadow:0 0 0 5px rgba(78,161,255,.6), 0 0 0 13px rgba(78,161,255,.06), 0 12px 22px -5px rgba(0,0,0,.8), 0 0 22px rgba(123,197,255,.8)}
+  }
+  @media (prefers-reduced-motion:reduce){.num-marker.hl{animation:none}}
+  .star-marker{position:relative;color:#ffd66b;font-size:22px;line-height:1;text-shadow:0 1px 3px rgba(0,0,0,.85),0 0 9px rgba(245,185,66,.6);transition:transform .12s ease;display:flex;align-items:center;justify-content:center;width:26px;height:26px}
+  .star-marker .sn{position:absolute;top:50%;left:50%;transform:translate(-50%,-44%);font-family:var(--mono);font-size:9px;font-weight:800;color:#3a2a00}
+  .star-marker.hl{transform:scale(1.55);filter:drop-shadow(0 0 7px rgba(245,185,66,.95));z-index:1000}
+  .home-marker{color:var(--accent-2);font-size:18px;line-height:1;text-shadow:0 1px 3px rgba(0,0,0,.85)}
+  .flight-marker{width:24px;height:24px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;
+    background:linear-gradient(180deg,#2fd49a,#16a37b);color:#04211a;border:2px solid #04211a;box-shadow:0 2px 8px -2px rgba(0,0,0,.7),0 0 0 1px rgba(47,212,154,.5);transition:transform .12s ease}
+  .flight-marker.hl{transform:scale(1.45);box-shadow:0 0 0 4px rgba(47,212,154,.4),0 8px 18px -4px rgba(0,0,0,.7);z-index:1000}
+  .ff-input{width:100%;background:#0e1521;border:1px solid var(--line);color:var(--text);border-radius:7px;padding:6px 7px;font-size:12px;margin-top:2px;font-family:inherit}
+  .ff-row{margin-bottom:7px}
+  .ff-row label{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+  .ff-btn{border:none;border-radius:8px;padding:8px 12px;font-size:12.5px;font-weight:700;cursor:pointer}
+  .ff-save{background:linear-gradient(180deg,var(--accent-2),var(--accent));color:var(--ink)}
+  .ff-cancel{background:var(--panel3);color:var(--text);border:1px solid var(--line)}
+  .flog-del{float:right;background:none;border:none;color:var(--bad);cursor:pointer;font-size:14px;line-height:1;padding:0 2px}
+  .simwrap{margin-top:12px;background:linear-gradient(180deg,rgba(78,161,255,.06),rgba(78,161,255,.02));border:1px solid var(--line);border-radius:10px;padding:10px 11px}
+  .sim-title{font-size:11px;font-weight:700;color:var(--text);margin-bottom:7px}
+  .sim-title span{font-weight:400;color:var(--faint);font-size:10px;text-transform:none;letter-spacing:0}
+  .sim-line{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;padding:3px 0;border-top:1px solid var(--line-soft)}
+  .sim-line:first-child{border-top:none}
+  .sim-line span{color:var(--muted)}
+  .sim-line b{font-family:var(--mono);color:var(--accent-2)}
+  .sim-verdict{margin-top:8px;font-size:11.5px;color:var(--text);background:var(--panel2);border-radius:7px;padding:7px 9px;line-height:1.45}
+  .sim-hint{font-size:11px;color:var(--muted);line-height:1.45}
+  .verdict{border-radius:12px;padding:11px 13px;margin-bottom:14px;border:1px solid var(--line)}
+  .verdict .v-head{font-size:14px;font-weight:800;letter-spacing:-.01em}
+  .verdict .v-sub{font-size:11.5px;color:var(--muted);margin-top:2px}
+  .v-idle{background:var(--panel2)}
+  .v-good{background:linear-gradient(180deg,rgba(47,212,154,.16),rgba(47,212,154,.04));border-color:rgba(47,212,154,.45)}
+  .v-ok{background:linear-gradient(180deg,rgba(245,185,66,.16),rgba(245,185,66,.04));border-color:rgba(245,185,66,.45)}
+  .v-poor{background:linear-gradient(180deg,rgba(239,94,107,.16),rgba(239,94,107,.04));border-color:rgba(239,94,107,.45)}
+  .vtl{display:flex;gap:2px;margin-top:9px}
+  .vc{flex:1;height:9px;border-radius:2px;background:#2a3340}
+  .vc.g{background:#2fd49a}.vc.o{background:#f5b942}.vc.r{background:#ef5e6b}
+  .vtl-lbl{display:flex;justify-content:space-between;font-size:9.5px;color:var(--faint);margin-top:3px;font-family:var(--mono)}
+  .lb-scope{font-size:10.5px;color:var(--muted);margin-bottom:6px}
+  .lb-row{display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:var(--panel2);border:1px solid var(--line);margin-bottom:5px;cursor:pointer;font-size:12px}
+  .lb-row:hover{border-color:var(--accent)}
+  .lb-rank{flex:0 0 20px;height:20px;border-radius:50%;background:var(--panel3);color:var(--accent-2);font-family:var(--mono);font-weight:700;font-size:11px;display:flex;align-items:center;justify-content:center}
+  .lb-row:nth-child(2) .lb-rank{background:linear-gradient(180deg,#ffd66b,#f5b942);color:#3a2a00}
+  .lb-who{flex:1;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .lb-val{font-family:var(--mono);color:var(--accent-2);font-weight:700}
+  .lb-marker{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:800;font-size:12px;
+    background:linear-gradient(180deg,#ffd66b,#f5b942);color:#3a2a00;border:2px solid #3a2a00;box-shadow:0 2px 8px -2px rgba(0,0,0,.7),0 0 0 1px rgba(245,185,66,.5);transition:transform .12s ease}
+  .lb-marker.hl{transform:scale(1.5);box-shadow:0 0 0 4px rgba(245,185,66,.45),0 8px 18px -4px rgba(0,0,0,.75);z-index:1000}
+  .user-dot{width:16px;height:16px;border-radius:50%;background:#4ea1ff;border:2px solid #fff;box-shadow:0 0 0 4px rgba(78,161,255,.35),0 0 10px rgba(78,161,255,.6);animation:userPulse 2s ease-in-out infinite}
+  @keyframes userPulse{0%,100%{box-shadow:0 0 0 4px rgba(78,161,255,.35),0 0 10px rgba(78,161,255,.6)}50%{box-shadow:0 0 0 8px rgba(78,161,255,.1),0 0 14px rgba(78,161,255,.85)}}
+  #btnLocate{position:fixed;right:14px;bottom:62px;z-index:1200;width:42px;height:42px;border-radius:50%;border:1px solid var(--line);background:var(--panel2);color:var(--accent-2);font-size:18px;cursor:pointer;box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center}
+  #btnLocate.on{background:var(--accent);color:var(--ink)}
+  a.lnk{color:var(--accent-2);text-decoration:none;border-bottom:1px solid rgba(123,197,255,.35)}
+  a.lnk:hover{border-bottom-color:var(--accent-2)}
+  /* ---- first-run onboarding ---- */
+  #intro{position:fixed;inset:0;z-index:4000;display:flex;align-items:center;justify-content:center;
+    background:rgba(4,8,14,.66);backdrop-filter:blur(4px)}
+  #introCard{width:min(540px,92vw);max-height:88vh;overflow:auto;background:linear-gradient(180deg,var(--panel) 0%,var(--bg2) 100%);
+    border:1px solid var(--line);border-radius:16px;box-shadow:var(--shadow),0 30px 80px -30px rgba(0,0,0,.8);padding:24px 24px 20px}
+  #introCard h2{margin:0 0 2px;font-size:19px;font-weight:800;letter-spacing:-.01em}
+  #introCard .sub{color:var(--muted);font-size:13px;margin-bottom:18px}
+  #introCard .feat{display:flex;gap:13px;padding:11px 0;border-top:1px solid var(--line-soft)}
+  #introCard .feat:first-of-type{border-top:none}
+  #introCard .fi{flex:0 0 34px;height:34px;border-radius:10px;display:flex;align-items:center;justify-content:center;
+    background:rgba(78,161,255,.12);border:1px solid rgba(78,161,255,.25);color:var(--accent-2)}
+  #introCard .ft{font-size:13.5px;font-weight:600}
+  #introCard .fd{font-size:12.5px;color:var(--muted);line-height:1.5;margin-top:2px}
+  #introCard .ftag{font-family:var(--mono);font-size:11px;color:var(--accent);background:rgba(78,161,255,.1);
+    border:1px solid rgba(78,161,255,.22);border-radius:6px;padding:1px 6px;margin-left:4px}
+  #introCard .warn{margin-top:14px;font-size:11.5px;color:var(--muted);background:rgba(245,185,66,.08);
+    border-left:3px solid var(--warn);border-radius:8px;padding:9px 11px;line-height:1.5}
+  #introStart{margin-top:18px;width:100%;border:none;cursor:pointer;border-radius:11px;padding:12px;
+    font-size:14px;font-weight:700;color:var(--ink);background:linear-gradient(180deg,var(--accent-2),var(--accent));
+    box-shadow:0 1px 0 rgba(255,255,255,.25) inset,0 8px 20px -10px rgba(78,161,255,.7)}
+  #introStart:active{transform:translateY(1px)}
+  #helpBtn{position:fixed;right:14px;bottom:14px;z-index:1200;width:36px;height:36px;border-radius:50%;
+    border:1px solid var(--line);background:var(--panel2);color:var(--accent-2);font-weight:800;font-size:16px;
+    cursor:pointer;box-shadow:var(--shadow)}
+</style>
+</head>
+<body>
+<div id="intro">
+  <div id="introCard">
+    <h2>Find the best soaring spots</h2>
+    <div class="sub">This tool scans terrain and wind to show where to fly your DLG — thermal triggers and slope-soaring faces — ranked, with airspace flagged.</div>
+
+    <div class="feat"><div class="fi">🗺️</div><div><div class="ft">Terrain loads automatically<span class="ftag">just pan</span></div><div class="fd">Pan/zoom the map to your area — elevation streams in and the heatmap shows the best ground. Warmer = better.</div></div></div>
+    <div class="feat"><div class="fi">✏️</div><div><div class="ft">Draw an area to focus<span class="ftag">Draw area</span></div><div class="fd">Outline exactly where you fly to get tighter rankings and faster analysis of just that spot.</div></div></div>
+    <div class="feat"><div class="fi">🔀</div><div><div class="ft">Switch what you see</div><div class="fd"><b>Both / Thermal / Slope</b> for lift sources, plus <b>Lift</b> and <b>Rotor</b> from the wind model (rotor = turbulent lee to avoid).</div></div></div>
+    <div class="feat"><div class="fi">🌬️</div><div><div class="ft">Set the wind</div><div class="fd">Flip on <b>live wind</b> (auto-fetched + cached) or drag the dial. The ranked spots and lift/rotor layers update to match.</div></div></div>
+    <div class="feat"><div class="fi">📍</div><div><div class="ft">Read the ranked list</div><div class="fd">Numbered pins + cards rank the top spots; click any point on the map for a local readout.</div></div></div>
+
+    <div class="warn"><b>Plan only — verify before you fly.</b> Airspace and wind are approximate. Always check FAA B4UFLY / LAANC and NOTAMs, stay ≤400 ft AGL and in sight.</div>
+    <button id="introStart" onclick="document.getElementById('intro').style.display='none'">Start exploring →</button>
+  </div>
+</div>
+<button id="helpBtn" title="How it works" onclick="document.getElementById('intro').style.display='flex'">?</button>
+<button id="menuBtn" title="Menu" aria-label="Toggle panel" onclick="document.getElementById('app').classList.toggle('side-open')">☰</button>
+<button id="btnLocate" title="Show / track my location">📍</button>
+<div id="app">
+  <div id="sideBackdrop" onclick="document.getElementById('app').classList.remove('side-open')"></div>
+  <div id="side">
+    <header>
+      <div class="brand">
+        <div class="logo" aria-hidden="true">
+          <svg width="26" height="26" viewBox="0 0 26 26" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <!-- topographic contours -->
+            <path d="M2 19.5c3-2.4 6-2.4 9 0s6 2.4 9 0" stroke="#2f6fb0" stroke-width="1.1" stroke-linecap="round" opacity=".55"/>
+            <path d="M3.5 16.4c2.6-2 5.2-2 7.8 0s5.2 2 7.8 0" stroke="#3f86cf" stroke-width="1.1" stroke-linecap="round" opacity=".7"/>
+            <!-- glider silhouette -->
+            <path d="M13 3.2 L20.5 13 L14.7 11.4 L13 14.6 L11.3 11.4 L5.5 13 Z" fill="#7bc5ff"/>
+            <path d="M13 3.2 L20.5 13 L14.7 11.4 Z" fill="#4ea1ff"/>
+            <circle cx="13" cy="12.1" r="1.05" fill="#04121f"/>
+          </svg>
+        </div>
+        <div>
+          <h1>DLG <span class="em">Thermal &amp; Slope</span> Finder</h1>
+          <p>Topographic soaring scout · <span class="pin">Oceanside&nbsp;CA · 92057</span></p>
+        </div>
+      </div>
+    </header>
+    <div class="scroll">
+      <div id="verdict" class="verdict v-idle"></div>
+      <div class="group">
+        <h2><span class="step">1</span> Terrain</h2>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <button class="act" id="btnDraw" style="margin-top:0;display:flex;align-items:center;justify-content:center;gap:7px">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" style="flex:0 0 auto"><path d="M2 12l1-3 7-7 2 2-7 7-3 1z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg>
+            Draw area to evaluate</button>
+          <button class="act alt" id="btnClearArea" style="margin-top:0;flex:0 0 auto;display:none">Clear</button>
+        </div>
+        <label class="row" style="margin:0 0 8px"><span>Or auto-load the whole view</span>
+          <input type="checkbox" id="autoTerrain" checked></label>
+        <button class="act alt" id="btnFetch">Refresh terrain now</button>
+        <div style="height:8px"></div>
+        <button class="act alt" id="btnBuildings" style="margin-top:0">Add buildings (beta)</button>
+        <div style="font-size:10px;color:var(--faint);margin-top:4px;line-height:1.4">Zoom to street level (15+). Adds OSM building heights as wind obstacles &amp; sun-warmed surfaces. Data is patchy &amp; the free service can be slow.</div>
+        <div style="height:10px"></div>
+        <details>
+          <summary style="font-size:11px;color:var(--muted);cursor:pointer;font-weight:600;letter-spacing:.02em">Advanced — your own 1 m DEM or hosted tiles</summary>
+          <div style="height:8px"></div>
+          <div id="drop">
+            <svg width="18" height="18" viewBox="0 0 18 18" fill="none" style="display:block;margin:0 auto 6px;opacity:.8"><path d="M9 2v8M9 2L6 5M9 2l3 3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/><path d="M3 11v3a1 1 0 001 1h10a1 1 0 001-1v-3" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            Drop a 1 m DEM GeoTIFF here<br>(USGS 3DEP / OpenTopography)</div>
+          <input type="file" id="file" accept=".tif,.tiff" style="display:none"/>
+          <div style="height:8px"></div>
+          <input id="tileUrl" placeholder="hosted tiles  …/{z}/{x}/{y}.png"
+            style="width:100%;background:var(--bg2);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:9px 10px;font-size:11px;font-family:var(--mono);margin-bottom:6px;outline:none"/>
+          <div style="display:flex;gap:6px">
+            <button class="act alt" id="btnTiles" style="margin-top:0">Use tiles</button>
+            <button class="act alt" id="btnTilesOff" style="margin-top:0;display:none">Stop tiles</button>
+          </div>
+        </details>
+      </div>
+
+      <div class="group">
+        <h2><span class="step">2</span> What to highlight</h2>
+        <div class="seg" id="modeSeg">
+          <button data-mode="combined" class="active">Both</button>
+          <button data-mode="thermal">Thermal</button>
+          <button data-mode="slope">Slope</button>
+          <button data-mode="lift" title="Modeled orographic lift + speed-up">Lift</button>
+          <button data-mode="rotor" title="Lee-side rotor / turbulence hazard">Rotor</button>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2><span class="step">3</span> Wind</h2>
+        <label class="row" style="margin:0 0 6px"><span>Use live wind (Open-Meteo)</span>
+          <input type="checkbox" id="liveWind"></label>
+        <div id="liveBox" style="display:none;margin-bottom:8px">
+          <input type="range" id="fhour" min="0" max="47" value="0" style="width:100%">
+          <div id="fhourLbl" style="font-size:10.5px;color:var(--accent-2);font-family:var(--mono);margin-top:4px">—</div>
+        </div>
+        <div class="windwrap">
+          <canvas id="windDial" width="90" height="90"></canvas>
+          <div>
+            <div style="font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:var(--faint);font-weight:600;margin-bottom:5px">Wind from</div>
+            <div><span class="val" id="windLbl">W (270°)</span></div>
+            <div style="font-size:10.5px;color:var(--muted);margin-top:7px;line-height:1.45">Drag the dial to set manually.<br>Live wind overrides it.</div>
+          </div>
+        </div>
+        <label class="row" id="wspdRow">Wind speed <span class="val" id="wspdLbl">6 m/s</span>
+          <input type="range" id="wspd" min="0" max="20" value="6"></label>
+        <div class="simwrap">
+          <div class="sim-title">🌡️ Thermal forecast <span>live convective data</span></div>
+          <div id="condBox"></div>
+        </div>
+        <div class="simwrap">
+          <div class="sim-title">🛩️ Flight estimate <span>for fun · verify at the field</span></div>
+          <div id="simBox"></div>
+        </div>
+      </div>
+
+      <div class="group">
+        <h2><span class="step">4</span> Sun &amp; display</h2>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:6px;text-transform:uppercase;letter-spacing:.06em">Base map</div>
+        <div class="seg" id="baseSeg" style="margin-bottom:12px">
+          <button data-base="topo" class="active">Topo</button>
+          <button data-base="sat">Satellite</button>
+          <button data-base="streets">Streets</button>
+        </div>
+        <label class="row">Month <span class="val" id="moLbl">Jul</span>
+          <input type="range" id="month" min="1" max="12" value="7"></label>
+        <label class="row">Hour (solar) <span class="val" id="hrLbl">15:00</span>
+          <input type="range" id="hour" min="6" max="20" value="15"></label>
+        <label class="row">Overlay opacity <span class="val" id="opLbl">70%</span>
+          <input type="range" id="op" min="0" max="100" value="70"></label>
+      </div>
+
+      <div class="group">
+        <h2>
+          <span class="ico"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 1.2l1.6 3.4 3.7.4-2.8 2.5.8 3.7L7 9.7 3.7 11.6l.8-3.7L1.7 5l3.7-.4L7 1.2z" fill="currentColor"/></svg></span>
+          Top spots <span class="sub">this view</span></h2>
+        <div id="spots"><div class="legend">The best spots in the area you're currently looking at — pan/zoom to change.</div></div>
+      </div>
+
+      <div class="group">
+        <h2><span class="ico" style="color:#ffd66b"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M7 1.2l1.6 3.4 3.7.4-2.8 2.5.8 3.7L7 9.7 3.7 11.6l.8-3.7L1.7 5l3.7-.4L7 1.2z" fill="currentColor"/></svg></span>
+          Epic spots <span class="sub">wide search</span></h2>
+        <div style="display:flex;gap:6px;align-items:center;margin-bottom:8px">
+          <input id="zipInput" value="92057" placeholder="ZIP" inputmode="numeric"
+            style="width:84px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px;font-size:12px;font-family:var(--mono)">
+          <input id="radiusMi" type="number" value="25" min="2" max="60"
+            style="width:64px;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px;font-size:12px;font-family:var(--mono)">
+          <span style="font-size:12px;color:var(--muted)">mi radius</span>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="act" id="btnEpic" style="flex:1">Find best 10 spots</button>
+          <button class="act alt" id="btnEpicHere" style="margin-top:0;flex:0 0 auto" title="Search around my GPS location">📍 Near me</button>
+        </div>
+        <div id="epicSpots" style="margin-top:8px"><div class="legend">The standout DLG terrain within X miles of a ZIP — the "stars" of the region, independent of your current view. Hover a result to locate it; click to fly there.</div></div>
+      </div>
+
+      <div class="group">
+        <h2><span class="ico" style="color:#2fd49a"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M1 13h12M2 13V6l5-3 5 3v7M6 13v-3h2v3" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/></svg></span>
+          Flight log <span class="sub">your flights</span></h2>
+        <div style="display:flex;gap:6px;margin-bottom:6px">
+          <button class="act" id="btnLogFlight" style="flex:1">＋ Log a flight</button>
+          <button class="act alt" id="btnLogHere" style="margin-top:0;flex:0 0 auto" title="Log at my GPS location">📍 Here</button>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <button class="act alt" id="btnExportFlights" style="flex:1;margin-top:0;font-size:11px">⬇ Export</button>
+          <button class="act alt" id="btnImportFlights" style="flex:1;margin-top:0;font-size:11px">⬆ Import</button>
+          <input type="file" id="fileFlights" accept=".json" style="display:none">
+        </div>
+        <div id="flightLog"><div class="legend">No flights logged yet. Click “Log a flight,” then tap the map where you flew and fill in your stats.</div></div>
+      </div>
+
+      <div class="group">
+        <h2><span class="ico" style="color:#ffd66b"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M3 2h8v3a4 4 0 01-8 0V2zM2 3h1v1a2 2 0 01-1-1zM12 3h-1v1a2 2 0 001-1zM5 11h4v1H5zM4 12h6v1H4z" fill="currentColor"/></svg></span>
+          Leaderboard <span class="sub">configurable</span></h2>
+        <select id="lbSort" style="width:100%;background:var(--panel2);border:1px solid var(--line);color:var(--text);border-radius:8px;padding:8px;font-size:12px;margin-bottom:6px">
+          <option value="alt">Max altitude</option>
+          <option value="time">Longest flight</option>
+          <option value="spot">Best per spot</option>
+        </select>
+        <label class="row" style="margin:0 0 8px"><span>Show on map</span><input type="checkbox" id="lbPins" checked></label>
+        <div id="leaderboard"></div>
+      </div>
+
+      <div class="group">
+        <h2>
+          <span class="ico"><svg width="13" height="13" viewBox="0 0 14 14" fill="none"><path d="M2 10.5c2.2-1.8 4.4-1.8 6.6 0M2 7c2.2-1.8 4.4-1.8 6.6 0M2 3.5c2.2-1.8 4.4-1.8 6.6 0" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/><circle cx="11.5" cy="3.5" r="1.3" fill="currentColor"/></svg></span>
+          Legend &amp; safety</h2>
+        <div class="legend">
+          <div class="legbar"></div>
+          <div class="scale"><span>poor</span><span>excellent</span></div>
+          <div class="lrow">
+            <span class="tag clear">clear</span><span class="tag caution">caution</span><span class="tag restricted">no-fly</span>
+            <span style="display:block;margin-top:6px;color:var(--faint)">Airspace status of each ranked spot.</span>
+          </div>
+          <div class="lrow">
+            <b style="color:var(--text)">Lift</b> — modeled orographic lift + speed-up (warm = stronger).<br>
+            <b style="color:var(--text)">Rotor</b> — lee-side turbulence hazard (red = avoid).<br>
+            <span style="color:var(--faint)">Both derive from the diagnostic terrain-flow model.</span>
+          </div>
+        </div>
+        <div class="disc">
+          <div class="dh">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none"><path d="M7 1.4l5.8 10.2H1.2L7 1.4z" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M7 5.6v3M7 10.3v.02" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            Plan only — verify before you fly
+          </div>
+          <b>Wind model:</b> a diagnostic, mass-conserving flow approximation (not full CFD). It captures
+          deflection, ridge speed-up, orographic lift/sink and an empirical lee rotor — useful for planning,
+          but real low-level flow is more complex. Treat rotor/lift as guidance, not guarantees.<br><br>
+          <b>Safety / legal:</b> Airspace data here is approximate and for planning only. 92057 borders <b>Camp Pendleton</b> (military, no overflight), <b>KOKB</b> and <b>KCRQ</b> airports. Before flying, always confirm with the FAA <a class="lnk" href="https://www.faa.gov/uas/getting_started/b4ufly" target="_blank">B4UFLY</a> app, LAANC, and current NOTAMs. Recreational flyers must stay ≤400 ft AGL, within line of sight, and follow the FAA Recreational rules &amp; a CBO safety code. I'm not a legal authority — verify before you fly.
+        </div>
+      </div>
+    </div>
+  </div>
+  <div id="mapwrap">
+    <div id="map"></div>
+    <div id="reticle" aria-hidden="true">✛</div>
+    <button id="placeHere">Place flight here</button>
+    <div id="status"></div>
+  </div>
+</div>
+
+<script>
+"use strict";
+// Surface any runtime error on-screen instead of failing silently to a blank map.
+window.addEventListener('error',ev=>{
+  const s=document.getElementById('status');
+  if(s){s.style.display='block';s.style.color='#ef5e6b';
+    s.textContent='Error: '+(ev.message||ev.error)+'  — see console for detail';}
+});
+if(typeof L==='undefined'){
+  document.getElementById('map').innerHTML=
+    '<div style="padding:24px;color:#ef5e6b;font:14px sans-serif">Map library (Leaflet) failed to load — check your internet connection, then reload.</div>';
+}
+
+// ============================ CONFIG ============================
+const CENTER = [33.246, -117.265];   // Oceanside 92057 (inland-ish)
+const map = L.map('map',{zoomControl:true}).setView(CENTER, 13);
+// selectable base maps (all keyless, CORS-friendly)
+const baseLayers={
+  topo: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png',{maxZoom:17,attribution:'© OpenTopoMap (CC-BY-SA), © OpenStreetMap'}),
+  sat:  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,attribution:'Imagery © Esri, Maxar, Earthstar Geographics'}),
+  satlabels: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',{maxZoom:19,opacity:.9}),
+  streets: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'})
+};
+let curBase=baseLayers.topo.addTo(map);
+function setBase(name){
+  if(curBase)map.removeLayer(curBase);
+  if(map.hasLayer(baseLayers.satlabels))map.removeLayer(baseLayers.satlabels);
+  curBase=baseLayers[name]||baseLayers.topo;
+  curBase.addTo(map);
+  if(curBase.bringToBack)curBase.bringToBack();
+  if(name==='sat'){ baseLayers.satlabels.addTo(map); }  // city/road labels over imagery
+}
+
+// polygon area-of-interest state (declared early; used by fetchTerrain & handlers)
+let drawing=false, drawPts=[], drawLine=null, evalPoly=null, evalLayer=null;
+// slider refs hoisted early so any code path (even a synchronous one) can read them safely
+const month_=document.getElementById('month'),hour_=document.getElementById('hour'),op_=document.getElementById('op');
+const MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+// on phones, collapse the drawer when an action needs the map (no-op on desktop)
+function closeSide(){const a=document.getElementById('app'); if(a)a.classList.remove('side-open');}
+
+// Known airspace features for the Oceanside area (APPROXIMATE — planning only).
+// Airports: hard ring (no-fly without authorization) + caution ring.
+const AIRPORTS = [
+  {name:'Oceanside Muni (KOKB)', lat:33.2173, lon:-117.3539, hard:0.8, caution:5.0},
+  {name:'McClellan-Palomar (KCRQ)', lat:33.1283, lon:-117.2800, hard:1.6, caution:5.0},
+  {name:'Camp Pendleton MCAS (KNFG)', lat:33.3017, lon:-117.3556, hard:2.0, caution:6.0}
+];
+// Camp Pendleton base — approximate boundary polygon [lat,lon]; treated as no-fly.
+const PENDLETON = [
+  [33.300,-117.500],[33.470,-117.420],[33.520,-117.330],[33.470,-117.180],
+  [33.380,-117.090],[33.300,-117.130],[33.300,-117.300],[33.300,-117.500]
+];
+
+// ============================ AIRSPACE LAYER ============================
+const airLayer = L.layerGroup().addTo(map);
+// LayerGroup has no bringToFront(); raise each child layer instead
+function bringAirToFront(){ airLayer.eachLayer(l=>{ if(l.bringToFront) l.bringToFront(); }); }
+// interactive:false so clicks pass THROUGH to the map readout (which reports airspace
+// status itself) — you can inspect wind/terrain under a restricted zone and see it's restricted.
+L.polygon(PENDLETON,{color:'#ef5e6b',weight:1,fillColor:'#ef5e6b',fillOpacity:.12,interactive:false})
+  .addTo(airLayer);
+AIRPORTS.forEach(a=>{
+  L.circle([a.lat,a.lon],{radius:a.caution*1000,color:'#f2b134',weight:1,fill:false,dashArray:'4 4',interactive:false}).addTo(airLayer);
+  L.circle([a.lat,a.lon],{radius:a.hard*1000,color:'#ef5e6b',weight:1,fillColor:'#ef5e6b',fillOpacity:.10,interactive:false}).addTo(airLayer);
+});
+
+function haversine(aLat,aLon,bLat,bLon){
+  const R=6371,r=Math.PI/180;
+  const dLat=(bLat-aLat)*r,dLon=(bLon-aLon)*r;
+  const x=Math.sin(dLat/2)**2+Math.cos(aLat*r)*Math.cos(bLat*r)*Math.sin(dLon/2)**2;
+  return 2*R*Math.asin(Math.sqrt(x)); // km
+}
+function pointInPoly(lat,lon,poly){
+  let inside=false;
+  for(let i=0,j=poly.length-1;i<poly.length;j=i++){
+    const yi=poly[i][0],xi=poly[i][1],yj=poly[j][0],xj=poly[j][1];
+    const hit=((yi>lat)!==(yj>lat))&&(lon<(xj-xi)*(lat-yi)/(yj-yi)+xi);
+    if(hit)inside=!inside;
+  }
+  return inside;
+}
+// Returns {level:'clear'|'caution'|'restricted', reason}
+function airspaceStatus(lat,lon){
+  if(pointInPoly(lat,lon,PENDLETON)) return {level:'restricted',reason:'Inside Camp Pendleton (military)'};
+  let worst={level:'clear',reason:'No major restriction known — still verify B4UFLY'};
+  for(const a of AIRPORTS){
+    const d=haversine(lat,lon,a.lat,a.lon);
+    if(d<=a.hard) return {level:'restricted',reason:'≤'+a.hard+' km from '+a.name};
+    if(d<=a.caution && worst.level!=='restricted') worst={level:'caution',reason:(d.toFixed(1))+' km from '+a.name+' — LAANC/ceiling check'};
+  }
+  return worst;
+}
+
+// ============================ SOLAR + TERRAIN MATH ============================
+function sunPosition(lat, lon, month, hour){
+  const rad=Math.PI/180, deg=180/Math.PI;
+  const doy=Math.round((month-0.5)*30.4)+1;
+  const gamma=2*Math.PI/365*(doy-1+(hour-12)/24);
+  const decl=0.006918-0.399912*Math.cos(gamma)+0.070257*Math.sin(gamma)
+    -0.006758*Math.cos(2*gamma)+0.000907*Math.sin(2*gamma)
+    -0.002697*Math.cos(3*gamma)+0.00148*Math.sin(3*gamma);
+  const ha=(hour-12)*15*rad;
+  const latR=lat*rad;
+  const sinAlt=Math.sin(latR)*Math.sin(decl)+Math.cos(latR)*Math.cos(decl)*Math.cos(ha);
+  const alt=Math.asin(Math.max(-1,Math.min(1,sinAlt)));
+  let cosAz=(Math.sin(decl)-Math.sin(alt)*Math.sin(latR))/(Math.cos(alt)*Math.cos(latR));
+  cosAz=Math.max(-1,Math.min(1,cosAz));
+  let az=Math.acos(cosAz);
+  if(ha>0)az=2*Math.PI-az;
+  return {alt:alt*deg, az:az*deg};
+}
+
+// Grid holder
+let G=null; // {z:Float32Array,w,h,dx,dy,bounds:L.latLngBounds, latC}
+
+function idx(r,c,w,h){return Math.max(0,Math.min(h-1,r))*w+Math.max(0,Math.min(w-1,c));}
+function slopeAspect(z,r,c,w,h,dx,dy){
+  const g=(rr,cc)=>z[idx(rr,cc,w,h)];
+  const dzdx=((g(r-1,c+1)+2*g(r,c+1)+g(r+1,c+1))-(g(r-1,c-1)+2*g(r,c-1)+g(r+1,c-1)))/(8*dx);
+  const dzdy=((g(r+1,c-1)+2*g(r+1,c)+g(r+1,c+1))-(g(r-1,c-1)+2*g(r-1,c)+g(r-1,c+1)))/(8*dy);
+  const slope=Math.atan(Math.hypot(dzdx,dzdy));
+  let asp=Math.atan2(dzdy,-dzdx);
+  let aspDeg=((90-asp*180/Math.PI)%360+360)%360;
+  return {slopeDeg:slope*180/Math.PI, aspectDeg:aspDeg, grad:Math.hypot(dzdx,dzdy)};
+}
+// Topographic Position Index via two box means (fast, separable-ish). R in cells.
+function buildTPI(z,w,h,R){
+  // integral image for fast box mean
+  const I=new Float64Array((w+1)*(h+1));
+  for(let r=0;r<h;r++){let row=0;for(let c=0;c<w;c++){row+=z[r*w+c];I[(r+1)*(w+1)+(c+1)]=I[r*(w+1)+(c+1)]+row;}}
+  const mean=(r0,c0,r1,c1)=>{ // inclusive box
+    r0=Math.max(0,r0);c0=Math.max(0,c0);r1=Math.min(h-1,r1);c1=Math.min(w-1,c1);
+    const A=I[r0*(w+1)+c0], B=I[r0*(w+1)+(c1+1)], C=I[(r1+1)*(w+1)+c0], D=I[(r1+1)*(w+1)+(c1+1)];
+    const n=(r1-r0+1)*(c1-c0+1);
+    return (D-B-C+A)/n;
+  };
+  const tpi=new Float32Array(w*h);
+  for(let r=0;r<h;r++)for(let c=0;c<w;c++){
+    tpi[r*w+c]=z[r*w+c]-mean(r-R,c-R,r+R,c+R);
+  }
+  return tpi;
+}
+
+// ============================ WIND MODEL ============================
+// Diagnostic mass-consistent terrain flow (WindNinja-style) + empirical lee rotor.
+// Validated separately; gives speed-up, orographic lift/sink, convergence, rotor.
+function windToVector(speed, fromDeg){
+  const r=fromDeg*Math.PI/180;
+  return {ux:-speed*Math.sin(r), vy:-speed*Math.cos(r)};   // x=E, y=N (toward)
+}
+function _grad(field,w,h,dx){
+  const gx=new Float32Array(w*h), gy=new Float32Array(w*h);
+  const at=(r,c)=>field[Math.max(0,Math.min(h-1,r))*w+Math.max(0,Math.min(w-1,c))];
+  for(let r=0;r<h;r++)for(let c=0;c<w;c++){
+    gx[r*w+c]=(at(r,c+1)-at(r,c-1))/(2*dx);
+    gy[r*w+c]=(at(r+1,c)-at(r-1,c))/(2*dx);
+  }
+  return {gx,gy};
+}
+function _solvePhi(rhs,D,w,h,dx,iters,omega){
+  const phi=new Float32Array(w*h), dx2=dx*dx; omega=omega||1.7; iters=iters||260;
+  for(let it=0;it<iters;it++){
+    for(let r=1;r<h-1;r++)for(let c=1;c<w-1;c++){
+      const k=r*w+c;
+      const De=0.5*(D[k]+D[k+1]),Dw=0.5*(D[k]+D[k-1]),Dn=0.5*(D[k]+D[k-w]),Ds=0.5*(D[k]+D[k+w]);
+      const sumD=De+Dw+Dn+Ds;
+      const nb=De*phi[k+1]+Dw*phi[k-1]+Dn*phi[k-w]+Ds*phi[k+w];
+      phi[k]=phi[k]+omega*((nb-rhs[k]*dx2)/sumD-phi[k]);
+    }
+  }
+  return phi;
+}
+function diagnosticWind(z,w,h,dx,speed,fromDeg,opts){
+  opts=opts||{}; const layer=opts.layer||700, iters=opts.iters||260;
+  // grid convention: +x = east (col+), +y = south (row+). Wind FROM fromDeg.
+  const ang0=fromDeg*Math.PI/180, sp=Math.max(0.1,speed);
+  const ux=-sp*Math.sin(ang0);   // east component of velocity (toward)
+  const vy= sp*Math.cos(ang0);   // south component (wind from N blows toward +row)
+  let zmax=-1e9; for(let i=0;i<w*h;i++) if(z[i]>zmax) zmax=z[i];
+  const top=zmax+layer, D=new Float32Array(w*h);
+  for(let i=0;i<w*h;i++) D[i]=Math.max(layer*0.15, top-z[i]);
+  const gD=_grad(D,w,h,dx), rhs=new Float32Array(w*h);
+  for(let i=0;i<w*h;i++) rhs[i]=-(ux*gD.gx[i]+vy*gD.gy[i]);
+  const phi=_solvePhi(rhs,D,w,h,dx,iters,opts.omega);
+  const gP=_grad(phi,w,h,dx);
+  const Vx=new Float32Array(w*h),Vy=new Float32Array(w*h),spd=new Float32Array(w*h);
+  for(let i=0;i<w*h;i++){Vx[i]=ux+gP.gx[i];Vy[i]=vy+gP.gy[i];spd[i]=Math.hypot(Vx[i],Vy[i]);}
+  const gz=_grad(z,w,h,dx), wvel=new Float32Array(w*h);
+  for(let i=0;i<w*h;i++) wvel[i]=Vx[i]*gz.gx[i]+Vy[i]*gz.gy[i];
+  const at=(f,r,c)=>f[Math.max(0,Math.min(h-1,r))*w+Math.max(0,Math.min(w-1,c))];
+  const conv=new Float32Array(w*h);
+  for(let r=0;r<h;r++)for(let c=0;c<w;c++){
+    const div=(at(Vx,r,c+1)-at(Vx,r,c-1))/(2*dx)+(at(Vy,r+1,c)-at(Vy,r-1,c))/(2*dx);
+    conv[r*w+c]=Math.max(0,-div);
+  }
+  const ang=fromDeg*Math.PI/180, upx=Math.sin(ang), upy=-Math.cos(ang); // step toward wind source (upwind)
+  const wfloor=Math.max(0,Math.min(1,(sp-2)/4));   // little/no lee rotor in calm air
+  const Lmax=opts.wake||1500, steps=Math.max(4,Math.round(Lmax/dx)), rotor=new Float32Array(w*h);
+  for(let r=0;r<h;r++)for(let c=0;c<w;c++){
+    const k=r*w+c; if(wvel[k]>=0||wfloor<=0){rotor[k]=0;continue;}
+    let crest=z[k],hitDist=0;
+    for(let s=1;s<=steps;s++){const rr=Math.round(r+upy*s),cc=Math.round(c+upx*s);
+      if(rr<0||cc<0||rr>=h||cc>=w)break; const zv=z[rr*w+cc]; if(zv>crest){crest=zv;hitDist=s*dx;}}
+    const drop=crest-z[k];
+    if(drop>15){const prox=Math.exp(-hitDist/Math.max(dx,Lmax*0.5)); rotor[k]=drop*prox*Math.min(1,-wvel[k])*wfloor;}
+  }
+  return {Vx,Vy,spd,wvel,conv,rotor,ambient:Math.hypot(ux,vy)};
+}
+
+// ---- live wind (Open-Meteo) with localStorage cache ----
+let windCache=null;       // {time[],spd10[],dir10[],spd925[],dir925[]}
+async function getWindForecast(lat,lon){
+  const latR=Math.round(lat*20)/20, lonR=Math.round(lon*20)/20, key='dlgwind:'+latR+','+lonR;
+  try{const c=JSON.parse(localStorage.getItem(key)||'null');
+    if(c&&Date.now()-c.fetchedAt<6*3600*1000){windCache=c;return c;}}catch(e){}
+  const base='https://api.open-meteo.com/v1/forecast?latitude='+latR+'&longitude='+lonR
+    +'&wind_speed_unit=ms&forecast_days=2&timezone=auto&hourly=';
+  const windVars='wind_speed_10m,wind_direction_10m,wind_gusts_10m,wind_speed_925hPa,wind_direction_925hPa';
+  const convVars=',cape,cloud_cover_low,temperature_2m,dew_point_2m';
+  let H=null;
+  try{ const r=await fetch(base+windVars+convVars); if(r.ok) H=(await r.json()).hourly; }catch(e){}
+  if(!H){ const r=await fetch(base+windVars); if(!r.ok) throw new Error('wind HTTP '+(r&&r.status)); H=(await r.json()).hourly; }
+  const rec={fetchedAt:Date.now(),lat:latR,lon:lonR,time:H.time,
+    spd10:H.wind_speed_10m,dir10:H.wind_direction_10m,gust10:H.wind_gusts_10m,
+    spd925:H.wind_speed_925hPa,dir925:H.wind_direction_925hPa,
+    cape:H.cape,ccLow:H.cloud_cover_low,t2m:H.temperature_2m,td2m:H.dew_point_2m};
+  try{localStorage.setItem(key,JSON.stringify(rec));}catch(e){}
+  windCache=rec; return rec;
+}
+function nearestHourIndex(times){
+  if(!times)return 0; const now=Date.now(); let best=0,bd=1e18;
+  for(let i=0;i<times.length;i++){const d=Math.abs(new Date(times[i]).getTime()-now); if(d<bd){bd=d;best=i;}}
+  return best;
+}
+// current wind {speed(m/s), fromDeg} from live cache+slider, else manual dial+speed
+function currentWind(){
+  const live=document.getElementById('liveWind').checked;
+  if(live && windCache){
+    const i=Math.min(windCache.dir10.length-1,Math.max(0,+document.getElementById('fhour').value));
+    const s=windCache.spd10[i]||0;
+    return {speed:s, fromDeg:windCache.dir10[i]||0,
+            gust:windCache.gust10&&windCache.gust10[i]!=null?windCache.gust10[i]:s*1.4,
+            spd925:windCache.spd925?windCache.spd925[i]:null, dir925:windCache.dir925?windCache.dir925[i]:null};
+  }
+  const s=+document.getElementById('wspd').value;
+  return {speed:s, fromDeg:WIND, gust:s*1.4};
+}
+// ---- DLG flight estimate (a fun, roughly-right novelty) ----
+function updateSim(){
+  const box=document.getElementById('simBox'); if(!box)return;
+  const w=currentWind(), spd=w.speed||0, gust=w.gust!=null?w.gust:spd*1.4;
+  const baseAUW=260, S=0.22, rho=1.225, CLmax=1.2;        // reference 1.5 m DLG (cambered airfoil)
+  const Vstall=Math.sqrt(2*(baseAUW/1000*9.81)/S/(rho*CLmax));
+  const Vbg=1.3*Vstall;                                    // best-glide ~5 m/s (unballasted)
+  // ballast only matters once gusts approach best-glide speed; realistic DLG cap ~+60 g
+  const ballast=Math.max(0, Math.min(60, Math.round((gust-5)*1.2)*5));
+  const reqAUW=baseAUW+ballast;
+  const penSpd=Vbg*Math.sqrt(reqAUW/baseAUW);              // ballasted best-glide speed
+  const outrun=penSpd<gust;                                // gust may park you upwind
+  const liftMS = WF ? WF.liftMax : spd*0.42;               // modeled orographic lift, else estimate
+  const minSink=0.45*Math.sqrt(reqAUW/baseAUW);
+  const climbFpm=Math.round(Math.max(0,liftMS-minSink)*196.85/10)*10;
+  let verdict;
+  if(spd<2) verdict="Dead air — thumbs only, it's a launch-height day. 🥱";
+  else if(spd<4) verdict="Light & floaty — go minimum weight and milk every bump.";
+  else if(spd<7) verdict="Working breeze — nominal ballast, nice slope lift.";
+  else if(spd<10) verdict="It's honking — ballast up for penetration. 💪";
+  else verdict="Survival mode — maybe fly the foamie today. 😬";
+  if(outrun) verdict+=' ⚠ Gusts can out-run you upwind — stay out front.';
+  box.innerHTML='<div class="sim-line"><span>Recommended ballast</span><b>'+(ballast>0?('+'+ballast+' g'):'none / min')+'</b></div>'
+    +'<div class="sim-line"><span>Target all-up weight</span><b>'+Math.round(reqAUW)+' g</b></div>'
+    +'<div class="sim-line"><span>Penetration speed</span><b style="'+(outrun?'color:var(--bad)':'')+'">'+penSpd.toFixed(1)+' m/s vs '+gust.toFixed(0)+' gust</b></div>'
+    +'<div class="sim-line"><span>Modeled rising air</span><b>~'+climbFpm+' ft/min</b></div>'
+    +'<div class="sim-verdict">'+verdict+'</div>';
+  updateConditions();
+}
+// Real thermal/convective forecast from Open-Meteo (CAPE, cloudbase, low cloud)
+function updateConditions(){
+  const box=document.getElementById('condBox'); if(!box)return;
+  const live=document.getElementById('liveWind').checked;
+  if(!(live && windCache && windCache.cape)){
+    box.innerHTML='<div class="sim-hint">Turn on live wind for a thermal forecast — CAPE, cloudbase &amp; cloud cover.</div>'; return;
+  }
+  const i=Math.min(windCache.cape.length-1,Math.max(0,+document.getElementById('fhour').value));
+  const cape=Number.isFinite(windCache.cape[i])?windCache.cape[i]:0;
+  const cc=windCache.ccLow&&Number.isFinite(windCache.ccLow[i])?windCache.ccLow[i]:null;
+  const T=windCache.t2m&&Number.isFinite(windCache.t2m[i])?windCache.t2m[i]:null;
+  const Td=windCache.td2m&&Number.isFinite(windCache.td2m[i])?windCache.td2m[i]:null;
+  const strength = cape<50?'Dead 🥱':cape<200?'Weak':cape<600?'Moderate':cape<1200?'Strong 🔥':'Booming 🚀';
+  const cbaseM = (T!=null&&Td!=null)? Math.max(0,(T-Td)*125) : null;   // Espy cloudbase estimate
+  box.innerHTML='<div class="sim-line"><span>Thermal strength</span><b>'+strength+'</b></div>'
+    +'<div class="sim-line"><span>CAPE</span><b>'+Math.round(cape)+' J/kg</b></div>'
+    +(cbaseM!=null?'<div class="sim-line"><span>Est. cloudbase</span><b>~'+(Math.round(cbaseM*3.281/100)*100)+' ft AGL</b></div>':'')
+    +(cc!=null?'<div class="sim-line"><span>Low cloud</span><b>'+Math.round(cc)+'%</b></div>':'');
+}
+// "Is it flyable right now?" — synthesize wind + gusts + daylight into a verdict + 12 h timeline
+function flyHour(i){
+  const spd=windCache.spd10[i], gust=windCache.gust10&&windCache.gust10[i]!=null?windCache.gust10[i]:spd*1.4;
+  const t=windCache.time[i]||''; const hr=+t.slice(11,13)||12, mo=+t.slice(5,7)||7;
+  const sun=sunPosition(CENTER[0],CENTER[1],mo,hr);
+  if(sun.alt<=0) return 0;                          // dark
+  if(spd>12||gust>16) return 0.08;                  // too windy
+  let s = spd<=6?1 : spd<=9?0.6 : 0.35;
+  if(gust>12) s*=0.6;
+  return s;
+}
+function pad2(h){return (h<10?'0':'')+h;}
+function updateVerdict(){
+  const box=document.getElementById('verdict'); if(!box)return;
+  if(!(document.getElementById('liveWind').checked && windCache && windCache.spd10)){
+    box.className='verdict v-idle';
+    box.innerHTML='<div class="v-head">Is it flyable?</div><div class="v-sub">Turn on live wind for a “flyable now” read + today’s best window.</div>';
+    return;
+  }
+  const start=nearestHourIndex(windCache.time), N=Math.min(12, windCache.time.length-start);
+  const cells=[]; const sc=[];
+  for(let k=0;k<N;k++){ const i=start+k; const s=flyHour(i); sc.push(s);
+    cells.push({hr:(+(windCache.time[i]||'').slice(11,13))||0, s:s}); }
+  const now=sc[0]||0;
+  let bestRun=null, run=null;
+  for(let k=0;k<N;k++){ if(sc[k]>=0.7){ run=run||{a:k,b:k}; run.b=k; } else { if(run&&(!bestRun||(run.b-run.a)>(bestRun.b-bestRun.a)))bestRun=run; run=null; } }
+  if(run&&(!bestRun||(run.b-run.a)>(bestRun.b-bestRun.a)))bestRun=run;
+  const level = now>=0.7?'good':now>=0.35?'ok':'poor';
+  const head = level==='good'?'Flyable now 🟢':level==='ok'?'Marginal 🟡':'Tough right now 🔴';
+  let sub;
+  if(bestRun){ sub='Best DLG window today: <b>'+pad2(cells[bestRun.a].hr)+':00–'+pad2((cells[bestRun.b].hr+1)%24)+':00</b>'; }
+  else { sub = sc.some(s=>s>=0.35)?'Marginal at best for the next '+N+' h':'Too windy or dark — not great today'; }
+  box.className='verdict v-'+level;
+  box.innerHTML='<div class="v-head">'+head+'</div><div class="v-sub">'+sub+'</div>'
+    +'<div class="vtl">'+cells.map(c=>'<span class="vc '+(c.s>=0.7?'g':c.s>=0.35?'o':'r')+'" title="'+pad2(c.hr)+':00"></span>').join('')+'</div>'
+    +'<div class="vtl-lbl"><span>'+pad2(cells[0].hr)+':00</span><span>'+(cells.length?pad2(cells[cells.length-1].hr)+':00':'')+'</span></div>';
+}
+// run the flow solve on a downsampled grid; store coarse fields in WF
+let WF=null;
+function computeWind(){
+  if(!G){WF=null;return;}
+  const wnd=currentWind();
+  WIND=((wnd.fromDeg%360)+360)%360;                 // keep dial/aspect logic in sync
+  const maxDim=110, f=Math.max(1,Math.ceil(Math.max(G.w,G.h)/maxDim));
+  const cw=Math.max(8,Math.floor(G.w/f)), ch=Math.max(8,Math.floor(G.h/f)), cz=new Float32Array(cw*ch);
+  for(let r=0;r<ch;r++)for(let c=0;c<cw;c++){
+    const sr=Math.min(G.h-1,Math.floor(r*G.h/ch)), sc=Math.min(G.w-1,Math.floor(c*G.w/cw));
+    cz[r*cw+c]=G.z[sr*G.w+sc];
+  }
+  const F=diagnosticWind(cz,cw,ch,G.dx*f,wnd.speed,wnd.fromDeg,{layer:700,iters:240});
+  // precompute field maxima for normalization
+  let rotMax=1e-6,liftMax=1e-6,convMax=1e-9;
+  for(let i=0;i<cw*ch;i++){if(F.rotor[i]>rotMax)rotMax=F.rotor[i];const lv=Math.max(0,F.wvel[i]);if(lv>liftMax)liftMax=lv;if(F.conv[i]>convMax)convMax=F.conv[i];}
+  WF={cw,ch,F,ambient:F.ambient,speed:wnd.speed,fromDeg:wnd.fromDeg,rotMax,liftMax,convMax};
+  updateWindLabel();
+}
+function sampleWF(field,r,c){
+  const cc=Math.min(WF.cw-1,Math.floor(c*WF.cw/G.w)), cr=Math.min(WF.ch-1,Math.floor(r*WF.ch/G.h));
+  return field[cr*WF.cw+cc];
+}
+
+// ============================ ANALYSIS ============================
+let A=null; // {slopeDeg,aspect,tpi, thermal,slope,combined,lift,rotor, sun}
+function analyze(){ computeBase(); }   // entry point after new terrain loads
+
+// Heavy step: slope/aspect/TPI from the elevation grid (run once per terrain load)
+function computeBase(){
+  if(!G) return;
+  const {z,w,h,dx,dy}=G;
+  const Rcells=Math.max(2,Math.round(80/Math.max(dx,dy)));   // ~80 m TPI radius
+  const tpi=buildTPI(z,w,h,Rcells);                          // meters
+  const mask=G.mask;                                          // 1 inside AOI, 0 outside (or null)
+  const slopeArr=new Float32Array(w*h), aspArr=new Float32Array(w*h);
+  for(let r=0;r<h;r++)for(let c=0;c<w;c++){
+    const k=r*w+c;
+    if(mask&&!mask[k]){slopeArr[k]=0;aspArr[k]=0;continue;}   // skip compute outside the drawn area
+    const sa=slopeAspect(z,r,c,w,h,dx,dy);
+    slopeArr[k]=sa.slopeDeg; aspArr[k]=sa.aspectDeg;
+  }
+  A={slopeDeg:slopeArr,aspect:aspArr,tpi:tpi,mask:mask};
+  computeWind();      // solve terrain flow for the current wind before scoring
+  rescore();
+}
+
+// Light step: re-score from cached derivatives when wind / sun / month change
+function rescore(){
+  if(!A||!G) return;
+  const sun=sunPosition(CENTER[0],CENTER[1],+month_.value,+hour_.value);
+  const n=G.w*G.h;
+  const th=new Float32Array(n), sl=new Float32Array(n), cb=new Float32Array(n);
+  const lift=new Float32Array(n), rot=new Float32Array(n);
+  const mask=A.mask, useWind=!!WF, Z=G.z, WATER=1.0;       // <1 m elevation ≈ water (sea-level)
+  for(let i=0;i<n;i++){
+    if(mask&&!mask[i])continue;                              // leave 0 outside the drawn area
+    if(Z[i]<WATER)continue;                                 // skip water — no thermals over the sea
+    const s=A.slopeDeg[i], a=A.aspect[i], tp=A.tpi[i];
+    let t=scoreDeriv(s,a,tp,sun,WIND,'thermal');
+    let l=scoreDeriv(s,a,tp,sun,WIND,'slope');
+    if(useWind){
+      const r=(i/G.w)|0, c=i%G.w;
+      const wv=sampleWF(WF.F.wvel,r,c), rotor=sampleWF(WF.F.rotor,r,c);
+      const conv=sampleWF(WF.F.conv,r,c), spd=sampleWF(WF.F.spd,r,c);
+      const liftN=Math.max(0,wv)/WF.liftMax;                 // orographic upslope lift 0..1
+      const rotorN=Math.min(1,rotor/WF.rotMax);              // lee-rotor hazard 0..1
+      const convN=conv/WF.convMax;                           // convergence 0..1
+      lift[i]=Math.min(1, liftN*(0.5+0.5*spd/Math.max(0.1,WF.ambient))); // lift incl. speed-up
+      rot[i]=rotorN;
+      // slope soaring: modeled lift, knocked down by lee rotor
+      l=Math.min(1, 0.45*l + 0.55*liftN) * (1-0.8*rotorN);
+      // thermals: convergence helps, rotor/strong sink hurt
+      t=Math.min(1, t*(1+0.6*convN)*(1-0.5*rotorN));
+      if(wv<0) t*=Math.max(0.45, 1 - 0.3*Math.min(1,(-wv)/(WF.ambient+1e-6)));
+    }
+    th[i]=t; sl[i]=Math.max(0,l); cb[i]=Math.max(t*0.95, sl[i]);
+  }
+  A.thermal=th; A.slope=sl; A.combined=cb; A.lift=lift; A.rotor=rot; A.sun=sun;
+  renderOverlay();
+  rankSpots();
+}
+
+// Route a parameter change to whichever data source is active
+let _paramTimer=null;
+function onParamsChanged(){
+  clearTimeout(_paramTimer);
+  _paramTimer=setTimeout(()=>{
+    if(tileLayer){ redrawTiles(); rankFromTiles(); }
+    else if(A){ rescore(); }
+  },60);
+}
+
+// ============================ RENDER OVERLAY ============================
+let overlay=null;
+function lerpStops(stops,v){
+  const t=Math.max(0,Math.min(1,v))*(stops.length-1);
+  const i=Math.floor(t),f=t-i,a=stops[i],b=stops[Math.min(stops.length-1,i+1)];
+  return [a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f];
+}
+function scoreColor(v){ // good=warm. poor(slate)->teal->green->yellow->orange
+  return lerpStops([[44,58,73],[51,170,119],[120,221,68],[253,221,68],[247,115,51]],v);
+}
+function hazardColor(v){ // danger ramp: slate->amber->red (for rotor/turbulence)
+  return lerpStops([[44,58,73],[242,177,52],[239,94,107],[200,30,50]],v);
+}
+function curArr(){const m=MODE;
+  return m==='thermal'?A.thermal:m==='slope'?A.slope:m==='lift'?A.lift:m==='rotor'?A.rotor:A.combined;}
+function renderOverlay(){
+  if(!G||!A)return;
+  const {w,h,bounds}=G;
+  const arr=curArr(); if(!arr)return;
+  const ramp=(MODE==='rotor')?hazardColor:scoreColor;
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;
+  const ctx=cv.getContext('2d');const img=ctx.createImageData(w,h);
+  for(let i=0;i<arr.length;i++){
+    const v=arr[i];const[cr,cg,cb]=ramp(v);
+    img.data[i*4]=cr;img.data[i*4+1]=cg;img.data[i*4+2]=cb;
+    // transparent where value low so base map shows through
+    img.data[i*4+3]=Math.round(Math.pow(v,0.7)*255*0.9);
+  }
+  ctx.putImageData(img,0,0);
+  if(overlay)map.removeLayer(overlay);
+  overlay=L.imageOverlay(cv.toDataURL(),bounds,{opacity:+op_.value/100}).addTo(map);
+  bringAirToFront();
+}
+
+// ============================ RANK SPOTS ============================
+let spotMarkers=L.layerGroup().addTo(map);
+function rankSpots(){
+  if(!G||!A)return;
+  const {w,h,bounds}=G;const arr=curArr();if(!arr)return;
+  const south=bounds.getSouth(),north=bounds.getNorth(),west=bounds.getWest(),east=bounds.getEast();
+  // only rank spots inside what the map currently shows (grid may cover a larger padded area)
+  const vb=map.getBounds();
+  // show more spots when zoomed out, fewer when zoomed in (3..10)
+  const maxSpots=Math.max(3,Math.min(10,Math.round(10-(map.getZoom()-12)*1.3)));
+  // keep picks apart by a fraction of the VISIBLE view size
+  const dedupKm=Math.max(0.15,Math.min(3,haversine(vb.getSouth(),vb.getWest(),vb.getNorth(),vb.getEast())/9));
+  const cands=[];
+  const win=Math.max(5,Math.round(Math.min(w,h)*0.035));
+  const stp=Math.max(2,Math.round(win/2));
+  // LOCAL ranking is relative: show the best spots in THIS view, not an absolute bar.
+  // (only exclude water / essentially-zero cells; the Epic search keeps the high bar)
+  for(let r=win;r<h-win;r+=stp)for(let c=win;c<w-win;c+=stp){
+    const k=r*w+c;const v=arr[k];if(v<0.05)continue;
+    const lat=north+(south-north)*(r/(h-1));
+    const lon=west+(east-west)*(c/(w-1));
+    if(!vb.contains([lat,lon]))continue;                  // skip anything off-screen
+    let isMax=true;
+    for(let dr=-win;dr<=win&&isMax;dr+=2)for(let dc=-win;dc<=win;dc+=2){
+      if(arr[idx(r+dr,c+dc,w,h)]>v+1e-4){isMax=false;break;}
+    }
+    if(!isMax)continue;
+    cands.push({v,lat,lon,air:airspaceStatus(lat,lon),slopeDeg:A.slopeDeg[k],aspect:A.aspect[k],
+      isSlope:A.slope[k]>=A.thermal[k],thermal:A.thermal[k],slope:A.slope[k],
+      rotor:A.rotor?A.rotor[k]:0,dist:haversine(CENTER[0],CENTER[1],lat,lon)});
+  }
+  cands.sort((a,b)=>b.v-a.v);
+  const picked=[];
+  for(const cd of cands){
+    if(picked.some(p=>haversine(p.lat,p.lon,cd.lat,cd.lon)<dedupKm))continue;
+    picked.push(cd);
+    if(picked.length>=maxSpots+4)break;
+  }
+  // sort: clear first, then score; restricted sinks
+  const rankWeight={clear:0,caution:0.15,restricted:0.6};
+  picked.sort((a,b)=>(b.v-rankWeight[b.air.level])-(a.v-rankWeight[a.air.level]));
+  drawSpots(picked.slice(0,maxSpots));
+}
+function compass(deg){const d=['N','NE','E','SE','S','SW','W','NW'];return d[Math.round(deg/45)%8];}
+function drawSpots(top){
+  spotMarkers.clearLayers();
+  const host=document.getElementById('spots');
+  if(!top.length){host.innerHTML='<div class="legend">No standout spots in view. Try panning to hills/bluffs and zooming so terrain fills the map, then re-analyze.</div>';return;}
+  host.innerHTML='';
+  top.forEach((s,i)=>{
+    const n=i+1;
+    const marker=L.marker([s.lat,s.lon],{icon:L.divIcon({className:'',html:'<div class="num-marker">'+n+'</div>',iconSize:[24,24],iconAnchor:[12,12]})})
+      .addTo(spotMarkers)
+      .bindPopup('<b>#'+n+' — '+(s.isSlope?'Slope soaring':'Thermal source')+'</b><br>'
+        +'Score '+(s.v*100|0)+'/100<br>'
+        +'Slope '+s.slopeDeg.toFixed(0)+'°, faces '+compass(s.aspect)+' ('+s.aspect.toFixed(0)+'°)<br>'
+        +(s.isSlope?('Best wind <b>from '+compass(s.aspect)+'</b><br>'):'Sun-heated trigger point<br>')
+        +'Airspace: <b>'+s.air.level+'</b> — '+s.air.reason+'<br>'
+        +s.lat.toFixed(5)+', '+s.lon.toFixed(5));
+    const badge=()=>marker._icon&&marker._icon.querySelector('.num-marker');
+    // is the current wind blowing onto this face? (only meaningful for slope spots)
+    const al=Math.cos((s.aspect-WIND)*Math.PI/180);
+    const windTag = s.isSlope ? (al>0.6?'<span class="tag clear">wind ON face</span>':al>0.1?'<span class="tag caution">cross wind</span>':'<span class="tag restricted">wind OFF face</span>') : '';
+    const div=document.createElement('div');div.className='spot';
+    div.innerHTML='<div class="shead">'
+      +'<span class="rank">'+n+'</span>'
+      +'<span class="ttl">'+(s.isSlope?'Slope soaring':'Thermal source')+'</span>'
+      +'<span class="score"><span class="num">'+(s.v*100|0)+'</span><span class="den">/100</span></span>'
+      +'</div>'
+      +'<div class="tags">'
+      +'<span class="tag '+(s.isSlope?'slope':'thermal')+'">'+(s.isSlope?'SLOPE':'THERMAL')+'</span>'
+      +windTag
+      +'<span class="tag '+s.air.level+'">'+s.air.level+'</span>'
+      +(s.rotor>0.5?'<span class="tag restricted">⚠ lee rotor</span>':'')
+      +'</div>'
+      +'<div class="meta">'
+      +'slope <b>'+s.slopeDeg.toFixed(0)+'°</b> · faces <b>'+compass(s.aspect)+'</b>'
+      +(s.isSlope?(' · fly when wind <b>from '+compass(s.aspect)+'</b>'):' · sun-heated trigger')
+      +' · '+s.dist.toFixed(1)+' km from center'
+      +'<span class="reason">'+s.air.reason+'</span></div>';
+    div.onmouseenter=()=>{const b=badge();if(b)b.classList.add('hl');};
+    div.onmouseleave=()=>{const b=badge();if(b)b.classList.remove('hl');};
+    div.onclick=()=>{ closeSide(); map.setView([s.lat,s.lon], Math.max(map.getZoom(),14)); marker.openPopup(); };
+    host.appendChild(div);
+  });
+}
+
+// ============================ EPIC SPOTS (wide ZIP + radius search) ============================
+let epicMarkers=L.layerGroup().addTo(map), epicCenterMarker=null;
+const KM_PER_MI=1.60934;
+async function geocodeZip(zip){
+  const r=await fetch('https://api.zippopotam.us/us/'+encodeURIComponent(zip));
+  if(!r.ok) throw new Error('ZIP '+zip+' not found');
+  const j=await r.json(); const p=j.places&&j.places[0];
+  if(!p) throw new Error('ZIP not found');
+  return {lat:+p.latitude, lon:+p.longitude, name:(p['place name']||'')+', '+(p['state abbreviation']||'')};
+}
+async function searchEpic(centerOverride){
+  const radiusMi=Math.max(2,Math.min(60,+document.getElementById('radiusMi').value||25));
+  let center;
+  if(centerOverride){ center=centerOverride; }
+  else {
+    const zip=(document.getElementById('zipInput').value||'').trim();
+    showStatus('Locating '+(zip||'center')+'…');
+    try{ center = zip ? await geocodeZip(zip) : {lat:map.getCenter().lat,lon:map.getCenter().lng,name:'map center'}; }
+    catch(e){ hideStatus(); alert(e.message+'. Using the current map center instead.'); center={lat:map.getCenter().lat,lon:map.getCenter().lng,name:'map center'}; }
+  }
+  const radiusKm=radiusMi*KM_PER_MI;
+  const dLat=radiusKm/111.32, dLon=radiusKm/(111.32*Math.cos(center.lat*Math.PI/180));
+  const b=L.latLngBounds([center.lat-dLat,center.lon-dLon],[center.lat+dLat,center.lon+dLon]);
+  const tileRanges=z=>{const x0=Math.floor(lon2tile(b.getWest(),z)),x1=Math.floor(lon2tile(b.getEast(),z)),
+    y0=Math.floor(lat2tile(b.getNorth(),z)),y1=Math.floor(lat2tile(b.getSouth(),z));return {x0,x1,y0,y1,n:(x1-x0+1)*(y1-y0+1)};};
+  let tz=12, rng=tileRanges(tz); while(rng.n>48&&tz>9){tz--;rng=tileRanges(tz);}
+  const {x0,x1,y0,y1}=rng, nx=x1-x0+1, ny=y1-y0+1, W=nx*256, H=ny*256;
+  showStatus('Scanning '+radiusMi+' mi around '+center.name+'…');
+  const z=new Float32Array(W*H), jobs=[];
+  for(let ty=y0;ty<=y1;ty++)for(let tx=x0;tx<=x1;tx++){
+    jobs.push(loadElevTile(tz,tx,ty).then(el=>{const ox=(tx-x0)*256,oy=(ty-y0)*256;
+      for(let r=0;r<256;r++){const dst=(oy+r)*W+ox,src=r*256;for(let c=0;c<256;c++)z[dst+c]=el[src+c];}}));
+  }
+  try{ await Promise.all(jobs);}catch(e){ hideStatus(); alert('Could not load terrain for the search.'); return; }
+  const west=tile2lon(x0,tz),east=tile2lon(x1+1,tz),north=tile2lat(y0,tz),south=tile2lat(y1+1,tz);
+  const mpp=156543.03392*Math.cos(center.lat*Math.PI/180)/2**tz;
+  const tpi=buildTPI(z,W,H,Math.max(2,Math.round(120/mpp)));
+  const sun=sunPosition(center.lat,center.lon,7,14);
+  // epic score: wind-agnostic prominence + steepness + thermal convexity; water excluded
+  const esc=new Float32Array(W*H);
+  for(let r=0;r<H;r++)for(let c=0;c<W;c++){
+    const k=r*W+c; if(z[k]<1){esc[k]=0;continue;}
+    const sa=slopeAspect(z,r,c,W,H,mpp,mpp);
+    const relief=Math.max(0,Math.tanh(tpi[k]/20));
+    const steep=Math.exp(-((sa.slopeDeg-26)**2)/(2*169));
+    const slopePot=sa.slopeDeg<8?relief*0.3:0.55*relief+0.45*steep;
+    const th=scoreDeriv(sa.slopeDeg,sa.aspectDeg,tpi[k],sun,WIND,'thermal');
+    esc[k]=Math.max(slopePot, th*0.85);
+  }
+  const win=Math.max(4,Math.round(Math.min(W,H)*0.02)), stp=Math.max(2,Math.round(win/2)), cands=[];
+  for(let r=win;r<H-win;r+=stp)for(let c=win;c<W-win;c+=stp){
+    const v=esc[r*W+c]; if(v<0.4) continue;
+    const lat=north+(south-north)*(r/(H-1)), lon=west+(east-west)*(c/(W-1));
+    const distKm=haversine(center.lat,center.lon,lat,lon); if(distKm>radiusKm) continue;
+    let isMax=true;
+    for(let dr=-win;dr<=win&&isMax;dr+=stp)for(let dc=-win;dc<=win;dc+=stp){
+      if(esc[(r+dr)*W+(c+dc)]>v+1e-4){isMax=false;break;}
+    }
+    if(!isMax)continue;
+    // why is this spot good? capture the dominant terrain reasons
+    const k0=r*W+c, sa=slopeAspect(z,r,c,W,H,mpp,mpp), reliefM=tpi[k0];
+    const relief=Math.max(0,Math.tanh(reliefM/20)), steep=Math.exp(-((sa.slopeDeg-26)**2)/(2*169));
+    const slopePot=sa.slopeDeg<8?relief*0.3:0.55*relief+0.45*steep;
+    const thPot=scoreDeriv(sa.slopeDeg,sa.aspectDeg,reliefM,sun,WIND,'thermal')*0.85;
+    const isSlope=slopePot>=thPot, reasons=[];
+    if(sa.slopeDeg>42) reasons.push('very steep '+sa.slopeDeg.toFixed(0)+'° face ('+compass(sa.aspectDeg)+'-facing)');
+    else if(sa.slopeDeg>=14) reasons.push('steep '+sa.slopeDeg.toFixed(0)+'° face ('+compass(sa.aspectDeg)+'-facing)');
+    if(reliefM>25) reasons.push('prominent ridge, +'+reliefM.toFixed(0)+' m above surroundings');
+    else if(reliefM>10) reasons.push('raised spur, +'+reliefM.toFixed(0)+' m');
+    if(!isSlope) reasons.push('sun-exposed, convex trigger point');
+    const why=(isSlope?'Slope-soaring face — ':'Thermal source — ')+(reasons.length?reasons.join('; '):'standout terrain');
+    cands.push({v,lat,lon,air:airspaceStatus(lat,lon),distMi:distKm/KM_PER_MI,
+      slopeDeg:sa.slopeDeg,aspect:sa.aspectDeg,reliefM,elevM:z[k0],isSlope,why});
+  }
+  cands.sort((a,b)=>b.v-a.v);
+  const dedupKm=Math.max(1.2,radiusKm/10), picked=[];
+  for(const cd of cands){ if(picked.some(p=>haversine(p.lat,p.lon,cd.lat,cd.lon)<dedupKm))continue; picked.push(cd); if(picked.length>=16)break; }
+  const rw={clear:0,caution:0.1,restricted:0.5};
+  picked.sort((a,b)=>(b.v-rw[b.air.level])-(a.v-rw[a.air.level]));
+  hideStatus();
+  drawEpic(picked.slice(0,10), center);
+}
+function drawEpic(top, center){
+  epicMarkers.clearLayers();
+  epicCenterMarker=L.marker([center.lat,center.lon],{icon:L.divIcon({className:'',html:'<div class="home-marker">⌖</div>',iconSize:[22,22],iconAnchor:[11,11]})})
+    .addTo(epicMarkers).bindPopup('Search center · '+center.name);
+  const host=document.getElementById('epicSpots');
+  if(!top.length){host.innerHTML='<div class="legend">No standout spots in that radius — try a larger search.</div>';return;}
+  host.innerHTML='';
+  const pts=[[center.lat,center.lon]];
+  top.forEach((s,i)=>{
+    const n=i+1; pts.push([s.lat,s.lon]);
+    const marker=L.marker([s.lat,s.lon],{icon:L.divIcon({className:'',html:'<div class="star-marker">★<span class="sn">'+n+'</span></div>',iconSize:[26,26],iconAnchor:[13,13]})})
+      .addTo(epicMarkers)
+      .bindPopup('<b>★ Epic #'+n+'</b> — '+(s.v*100|0)+'/100<br>'+s.why+'<br>Elevation '+s.elevM.toFixed(0)+' m · '+s.distMi.toFixed(1)+' mi from '+center.name+'<br>Airspace: <b>'+s.air.level+'</b> — '+s.air.reason+'<br>'+s.lat.toFixed(4)+', '+s.lon.toFixed(4));
+    const sbadge=()=>marker._icon&&marker._icon.querySelector('.star-marker');
+    const div=document.createElement('div');div.className='spot';
+    div.innerHTML='<div class="shead"><span class="rank" style="background:linear-gradient(180deg,#ffd66b,#f5b942);color:#3a2a00">★</span>'
+      +'<span class="ttl">'+(s.isSlope?'Slope spot':'Thermal spot')+' '+n+'</span>'
+      +'<span class="score"><span class="num">'+(s.v*100|0)+'</span><span class="den">/100</span></span></div>'
+      +'<div class="meta"><b>'+s.distMi.toFixed(1)+' mi</b> from '+center.name
+      +' <span class="tag '+(s.isSlope?'slope':'thermal')+'">'+(s.isSlope?'SLOPE':'THERMAL')+'</span>'
+      +'<span class="tag '+s.air.level+'">'+s.air.level+'</span>'
+      +'<span class="reason">'+s.why+'</span>'
+      +'<span class="reason" style="opacity:.7">hover to locate · click to fly there</span></div>';
+    div.onmouseenter=()=>{ const x=sbadge(); if(x)x.classList.add('hl'); };
+    div.onmouseleave=()=>{ const x=sbadge(); if(x)x.classList.remove('hl'); };
+    div.onclick=()=>{ closeSide(); map.flyTo([s.lat,s.lon], 14); marker.openPopup(); };
+    host.appendChild(div);
+  });
+  // show the whole result set so every star is visible (hover then highlights which is which)
+  try{ map.fitBounds(L.latLngBounds(pts).pad(0.15)); }catch(e){}
+}
+
+// ============================ FLIGHT LOG (geotag, localStorage) ============================
+let loggingFlight=false, flightMarkers=L.layerGroup().addTo(map), flightMarkerById={};
+function loadFlights(){ try{return JSON.parse(localStorage.getItem('dlgFlights')||'[]');}catch(e){return [];} }
+function saveFlights(a){ try{localStorage.setItem('dlgFlights',JSON.stringify(a));}catch(e){} }
+function showLogUI(on){ const r=document.getElementById('reticle'),p=document.getElementById('placeHere'); if(r)r.style.display=on?'block':'none'; if(p)p.style.display=on?'block':'none'; }
+function startLogFlight(){
+  closeSide();
+  if(userLoc) map.setView([userLoc.lat,userLoc.lon], Math.max(map.getZoom(),15));   // default to your GPS spot
+  loggingFlight=true; document.getElementById('map').style.cursor='crosshair'; showLogUI(true);
+  showStatus('Center the ✛ on your spot → “Place flight here” · or tap the map · Esc to cancel');
+}
+function openFlightForm(lat,lon){
+  loggingFlight=false; document.getElementById('map').style.cursor=''; showLogUI(false); hideStatus();
+  map.setView([lat,lon], Math.max(map.getZoom(),15));
+  L.popup({maxWidth:280}).setLatLng([lat,lon]).setContent(flightFormHtml(lat,lon)).openOn(map);
+}
+function cancelLogFlight(){ loggingFlight=false; document.getElementById('map').style.cursor=''; showLogUI(false); map.closePopup(); hideStatus(); }
+function flightFormHtml(lat,lon){
+  const today=new Date().toISOString().slice(0,10);
+  const pilot=getPilot();
+  return '<div style="min-width:236px"><b>Log a flight</b>'
+    +'<div style="display:flex;gap:6px;margin-top:6px">'
+    +'<div class="ff-row" style="flex:1"><label>Max alt (ft)</label><input id="ffAlt" class="ff-input" type="number" min="0" step="10" inputmode="numeric" placeholder="e.g. 280"></div>'
+    +'<div class="ff-row" style="flex:1"><label>Max time (min)</label><input id="ffTime" class="ff-input" type="number" min="0" step="0.5" inputmode="decimal" placeholder="e.g. 4.5"></div></div>'
+    +'<div class="ff-row"><label>Date</label><input id="ffDate" class="ff-input" type="date" value="'+today+'"></div>'
+    +'<div class="ff-row"><label>Notes</label><input id="ffNotes" class="ff-input" placeholder="conditions, lift, gear…"></div>'
+    +'<details style="margin-bottom:6px"><summary style="font-size:11px;color:var(--muted);cursor:pointer">Pilot <b>'+(pilot||'(set name)')+'</b> · DLG — edit</summary>'
+      +'<div class="ff-row" style="margin-top:6px"><label>Pilot / handle</label><input id="ffPilot" class="ff-input" value="'+pilot+'" placeholder="your name"></div>'
+      +'<div class="ff-row"><label>Aircraft</label><input id="ffAircraft" class="ff-input" value="DLG"></div></details>'
+    +'<div style="display:flex;gap:6px;margin-top:2px">'
+    +'<button class="ff-btn ff-save" onclick="saveFlight('+lat.toFixed(6)+','+lon.toFixed(6)+')">Save flight</button>'
+    +'<button class="ff-btn ff-cancel" onclick="cancelLogFlight()">Cancel</button></div>'
+    +'<div style="font-size:10px;color:var(--faint);margin-top:6px">Shared to the community board if it has a max alt or time.</div></div>';
+}
+function saveFlight(lat,lon){
+  const g=id=>document.getElementById(id);
+  const pilot=(g('ffPilot')?g('ffPilot').value:'').slice(0,32); setPilot(pilot);
+  const f={id:Date.now(),lat:lat,lon:lon,pilot:pilot||'anon',date:(g('ffDate').value)||new Date().toISOString().slice(0,10),
+    aircraft:(g('ffAircraft').value||'DLG').slice(0,40),
+    maxAltFt:g('ffAlt').value!==''?+g('ffAlt').value:null,
+    maxTimeMin:g('ffTime').value!==''?+g('ffTime').value:null,
+    notes:(g('ffNotes').value||'').slice(0,200)};
+  const a=loadFlights(); a.push(f); saveFlights(a);
+  postCommunity(f);                 // share if community is connected (fire-and-forget)
+  cancelLogFlight(); renderFlights(); renderLeaderboard();
+}
+function deleteFlight(id){ if(!confirm('Delete this logged flight?'))return; saveFlights(loadFlights().filter(f=>f.id!==id)); renderFlights(); }
+function flightHover(id,on){ const m=flightMarkerById[id]; const el=m&&m._icon&&m._icon.querySelector('.flight-marker'); if(el)el.classList.toggle('hl',on); }
+function renderFlights(){
+  flightMarkers.clearLayers(); flightMarkerById={};
+  const a=loadFlights().sort((x,y)=>(y.date||'').localeCompare(x.date||'')|| (y.id-x.id));
+  const host=document.getElementById('flightLog');
+  if(!a.length){ host.innerHTML='<div class="legend">No flights logged yet. Click “Log a flight,” then tap the map where you flew and fill in your stats.</div>'; return; }
+  host.innerHTML='';
+  a.forEach(f=>{
+    const m=L.marker([f.lat,f.lon],{icon:L.divIcon({className:'',html:'<div class="flight-marker">✈</div>',iconSize:[24,24],iconAnchor:[12,12]})})
+      .addTo(flightMarkers)
+      .bindPopup('<b>✈ '+(f.date||'')+'</b> · '+(f.aircraft||'DLG')+'<br>'
+        +(f.maxAltFt!=null?('Max alt <b>'+f.maxAltFt+' ft</b><br>'):'')
+        +(f.maxTimeMin!=null?('Max time <b>'+f.maxTimeMin+' min</b><br>'):'')
+        +(f.notes?('“'+f.notes+'”<br>'):'')+f.lat.toFixed(4)+', '+f.lon.toFixed(4));
+    flightMarkerById[f.id]=m;
+    const div=document.createElement('div'); div.className='spot';
+    div.innerHTML='<div class="shead"><span class="rank" style="background:linear-gradient(180deg,#2fd49a,#16a37b);color:#04211a">✈</span>'
+      +'<span class="ttl">'+(f.date||'flight')+'</span>'
+      +'<button class="flog-del" title="Delete" onclick="event.stopPropagation();deleteFlight('+f.id+')">✕</button></div>'
+      +'<div class="meta">'+(f.aircraft||'DLG')
+      +(f.maxAltFt!=null?(' · <b>'+f.maxAltFt+' ft</b>'):'')
+      +(f.maxTimeMin!=null?(' · <b>'+f.maxTimeMin+' min</b>'):'')
+      +(f.notes?('<span class="reason">'+f.notes+'</span>'):'')+'</div>';
+    div.onmouseenter=()=>flightHover(f.id,true);
+    div.onmouseleave=()=>flightHover(f.id,false);
+    div.onclick=()=>{ closeSide(); map.setView([f.lat,f.lon],15); m.openPopup(); };
+    host.appendChild(div);
+  });
+}
+function exportFlights(){
+  const blob=new Blob([JSON.stringify(loadFlights(),null,2)],{type:'application/json'}), url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download='dlg-flights.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+}
+function importFlights(file){
+  const r=new FileReader();
+  r.onload=()=>{ try{ const arr=JSON.parse(r.result); if(!Array.isArray(arr))throw 0;
+    const cur=loadFlights(), ids=new Set(cur.map(f=>f.id));
+    arr.forEach(f=>{ if(f&&typeof f.lat==='number'&&typeof f.lon==='number'&&!ids.has(f.id)) cur.push(f); });
+    saveFlights(cur); renderFlights();
+  }catch(e){ alert('That does not look like a valid flight-log export.'); } };
+  r.readAsText(file);
+}
+// expose handlers used by inline popup/card buttons
+window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.deleteFlight=deleteFlight;
+
+// ============================ COMMUNITY LOG + LEADERBOARD ============================
+// Shared flights via Supabase REST (PostgREST). Fill SUPA_URL/SUPA_KEY to go live;
+// until then the leaderboard runs on your own local flights. The anon key is public-safe
+// (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
+const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
+const communityEnabled=()=>!!(SUPA_URL&&SUPA_KEY);
+let communityFlights=[];
+const SNAP_M=250;   // flights within 250 m count as the same spot (same field, different sides)
+function getPilot(){ try{return localStorage.getItem('dlgPilot')||'';}catch(e){return '';} }
+function setPilot(v){ try{localStorage.setItem('dlgPilot',(v||'').slice(0,32));}catch(e){} }
+function normFlight(f){ // unify local + supabase row shapes
+  return {pilot:f.pilot||'anon', lat:+f.lat, lon:+f.lon, date:f.date||'',
+    aircraft:f.aircraft||'DLG',
+    maxAltFt: f.maxAltFt!=null?f.maxAltFt:(f.max_alt_ft!=null?f.max_alt_ft:null),
+    maxTimeMin: f.maxTimeMin!=null?f.maxTimeMin:(f.max_time_min!=null?f.max_time_min:null)};
+}
+async function fetchCommunity(){
+  if(!communityEnabled())return [];
+  try{
+    const r=await fetch(SUPA_URL+'/rest/v1/flights?select=*&hidden=eq.false&order=created_at.desc&limit=2000',
+      {headers:{apikey:SUPA_KEY,Authorization:'Bearer '+SUPA_KEY}});
+    if(!r.ok)return []; communityFlights=(await r.json()).map(normFlight); return communityFlights;
+  }catch(e){ return []; }
+}
+async function postCommunity(f){
+  if(!communityEnabled())return false;
+  try{
+    const r=await fetch(SUPA_URL+'/rest/v1/flights',{method:'POST',
+      headers:{apikey:SUPA_KEY,Authorization:'Bearer '+SUPA_KEY,'Content-Type':'application/json',Prefer:'return=minimal'},
+      body:JSON.stringify({pilot:f.pilot||'anon',lat:f.lat,lon:f.lon,date:f.date,aircraft:f.aircraft,max_alt_ft:f.maxAltFt,max_time_min:f.maxTimeMin,notes:f.notes||''})});
+    return r.ok;
+  }catch(e){ return false; }
+}
+// cluster flights so nearby ones (same field) form one spot
+function clusterSpots(flights){
+  const clusters=[];
+  flights.forEach(f=>{
+    let c=clusters.find(cl=>haversine(cl.lat,cl.lon,f.lat,f.lon)*1000<SNAP_M);
+    if(!c){ c={lat:f.lat,lon:f.lon,flights:[]}; clusters.push(c); }
+    c.flights.push(f);
+  });
+  return clusters;
+}
+function nearestSpotName(lat,lon){ // label a cluster by a nearby ranked/epic spot if any
+  return lat.toFixed(3)+', '+lon.toFixed(3);
+}
+function renderLeaderboard(){
+  const host=document.getElementById('leaderboard'); if(!host)return;
+  const sort=(document.getElementById('lbSort')||{value:'alt'}).value;
+  const src = communityEnabled()? communityFlights : loadFlights().map(normFlight);
+  const flights = src.filter(f=>Number.isFinite(f.lat)&&Number.isFinite(f.lon));
+  let rows=[];
+  if(sort==='alt'){
+    rows=flights.filter(f=>f.maxAltFt!=null).sort((a,b)=>b.maxAltFt-a.maxAltFt).slice(0,25)
+      .map(f=>({who:f.pilot,val:Math.round(f.maxAltFt)+' ft',sub:f.aircraft+' · '+(f.date||''),lat:f.lat,lon:f.lon}));
+  } else if(sort==='time'){
+    rows=flights.filter(f=>f.maxTimeMin!=null).sort((a,b)=>b.maxTimeMin-a.maxTimeMin).slice(0,25)
+      .map(f=>({who:f.pilot,val:(+f.maxTimeMin).toFixed(1)+' min',sub:f.aircraft+' · '+(f.date||''),lat:f.lat,lon:f.lon}));
+  } else { // best per spot (clustered, deduped by buffer)
+    const cl=clusterSpots(flights.filter(f=>f.maxAltFt!=null||f.maxTimeMin!=null));
+    rows=cl.map(c=>{
+      const best=c.flights.slice().sort((a,b)=>(b.maxAltFt||0)-(a.maxAltFt||0))[0];
+      return {who:best.pilot,val:(best.maxAltFt!=null?Math.round(best.maxAltFt)+' ft':((+best.maxTimeMin).toFixed(1)+' min')),
+        sub:nearestSpotName(c.lat,c.lon)+' · '+c.flights.length+' flight'+(c.flights.length>1?'s':''),lat:c.lat,lon:c.lon,best:best.maxAltFt||0};
+    }).sort((a,b)=>b.best-a.best).slice(0,25);
+  }
+  lbMarkers.clearLayers(); lbMarkerById={};
+  const scope = communityEnabled()?'community':'your flights only';
+  if(!rows.length){ host.innerHTML='<div class="legend">No ranked flights yet ('+scope+'). Log a flight with a max altitude or time to get on the board.</div>'; return; }
+  const showPins = !document.getElementById('lbPins') || document.getElementById('lbPins').checked;
+  host.innerHTML='<div class="lb-scope">'+(communityEnabled()?'🌐 Community board':'📋 Your flights — connect the shared log for the community board')+'</div>';
+  rows.forEach((r,i)=>{
+    const key='lb'+i, n=i+1;
+    if(showPins){
+      const m=L.marker([r.lat,r.lon],{icon:L.divIcon({className:'',html:'<div class="lb-marker">'+n+'</div>',iconSize:[24,24],iconAnchor:[12,12]}),zIndexOffset:300})
+        .addTo(lbMarkers).bindPopup('<b>#'+n+' · '+(r.who||'anon')+'</b><br>'+r.val+'<br>'+r.sub);
+      lbMarkerById[key]=m;
+    }
+    const d=document.createElement('div'); d.className='lb-row';
+    d.innerHTML='<span class="lb-rank">'+n+'</span><span class="lb-who">'+(r.who||'anon')+'</span>'
+      +'<span class="lb-val">'+r.val+'</span>';
+    d.title=r.sub;
+    d.onmouseenter=()=>lbHover(key,true);
+    d.onmouseleave=()=>lbHover(key,false);
+    d.onclick=()=>{ closeSide(); map.setView([r.lat,r.lon],15); const m=lbMarkerById[key]; if(m)m.openPopup(); };
+    host.appendChild(d);
+  });
+}
+let lbMarkers=L.layerGroup().addTo(map), lbMarkerById={};
+function lbHover(key,on){ const m=lbMarkerById[key]; const el=m&&m._icon&&m._icon.querySelector('.lb-marker'); if(el)el.classList.toggle('hl',on); }
+// expose for inline + refresh community board on load
+async function initCommunity(){ if(communityEnabled()){ await fetchCommunity(); } renderLeaderboard(); }
+
+// ============================ GEOLOCATION (phone) ============================
+let userLoc=null, userMarker=null, geoWatchId=null;
+function showUserLoc(p){
+  userLoc={lat:p.coords.latitude,lon:p.coords.longitude,acc:p.coords.accuracy};
+  const ll=[userLoc.lat,userLoc.lon];
+  if(!userMarker){
+    userMarker=L.marker(ll,{icon:L.divIcon({className:'',html:'<div class="user-dot"></div>',iconSize:[20,20],iconAnchor:[10,10]}),zIndexOffset:600})
+      .addTo(map).bindPopup('You are here');
+  } else userMarker.setLatLng(ll);
+}
+function geoErr(e){ hideStatus(); alert('Location unavailable: '+((e&&e.message)||'')+'\nOn a phone, allow location access and use the https site (not a local file).'); }
+function locateOnce(cb){
+  if(!navigator.geolocation){ alert('Geolocation isn’t supported on this device/browser.'); return; }
+  showStatus('Getting your location…');
+  navigator.geolocation.getCurrentPosition(p=>{ showUserLoc(p); hideStatus();
+    map.setView([userLoc.lat,userLoc.lon], Math.max(map.getZoom(),14)); if(cb)cb();
+  }, geoErr, {enableHighAccuracy:true,timeout:15000,maximumAge:30000});
+}
+function toggleLocate(){
+  const btn=document.getElementById('btnLocate');
+  if(geoWatchId!=null){ navigator.geolocation.clearWatch(geoWatchId); geoWatchId=null; if(btn)btn.classList.remove('on'); return; }
+  if(!navigator.geolocation){ alert('Geolocation isn’t supported on this device/browser.'); return; }
+  locateOnce(()=>{ if(btn)btn.classList.add('on');
+    geoWatchId=navigator.geolocation.watchPosition(showUserLoc, ()=>{}, {enableHighAccuracy:true,maximumAge:8000}); });
+}
+function logFlightHere(){
+  if(!userLoc){ locateOnce(()=>logFlightHere()); return; }
+  closeSide(); openFlightForm(userLoc.lat,userLoc.lon);
+}
+function epicFromHere(){
+  if(!userLoc){ locateOnce(()=>epicFromHere()); return; }
+  searchEpic({lat:userLoc.lat,lon:userLoc.lon,name:'your location'});
+}
+
+// ============================ BUILDINGS (beta, OSM Overpass) ============================
+// Optional: fetch building footprints+heights, burn them onto the elevation grid so the
+// wind model deflects around them and roofs/walls read as sun-warmed trigger points.
+let buildingsApplied=false;
+function parseBldgHeight(tags){
+  if(!tags) return 6;
+  if(tags.height){ const h=parseFloat(String(tags.height).replace(/[^0-9.]/g,'')); if(h>0) return Math.min(300,h); }
+  if(tags['building:levels']){ const l=parseFloat(tags['building:levels']); if(l>0) return Math.min(300,l*3.2); }
+  return 6;   // default ~2 storeys when unknown
+}
+function overpassFeatures(json){
+  const feats=[];
+  (json.elements||[]).forEach(el=>{
+    if(el.type==='way' && el.geometry && el.geometry.length>=3)
+      feats.push({ring:el.geometry.map(g=>[g.lat,g.lon]), height:parseBldgHeight(el.tags)});
+  });
+  return feats;
+}
+async function fetchBuildings(b){
+  const q='[out:json][timeout:25];(way["building"]('+b.getSouth().toFixed(5)+','+b.getWest().toFixed(5)+','+b.getNorth().toFixed(5)+','+b.getEast().toFixed(5)+'););out tags geom;';
+  const eps=['https://overpass.kumi.systems/api/interpreter','https://overpass-api.de/api/interpreter'];
+  for(const ep of eps){
+    try{
+      const ctrl=new AbortController(), to=setTimeout(()=>ctrl.abort(),25000);
+      const r=await fetch(ep,{method:'POST',body:'data='+encodeURIComponent(q),signal:ctrl.signal});
+      clearTimeout(to);
+      if(!r.ok) continue;
+      return overpassFeatures(await r.json());
+    }catch(e){ /* try next mirror */ }
+  }
+  throw new Error('OSM service busy');
+}
+function burnBuildings(feats){
+  if(!G||!G.zRaw) return 0;
+  const {w,h,bounds}=G, S=bounds.getSouth(),N=bounds.getNorth(),Wst=bounds.getWest(),E=bounds.getEast();
+  const z=G.zRaw.slice();
+  const lon2c=lo=>(lo-Wst)/(E-Wst)*(w-1), lat2r=la=>(N-la)/(N-S)*(h-1);
+  let burned=0;
+  feats.forEach(f=>{
+    const pr=f.ring.map(([la,lo])=>[lat2r(la),lon2c(lo)]);
+    let minr=1e9,maxr=-1e9,minc=1e9,maxc=-1e9;
+    pr.forEach(([r,c])=>{minr=Math.min(minr,r);maxr=Math.max(maxr,r);minc=Math.min(minc,c);maxc=Math.max(maxc,c);});
+    minr=Math.max(0,Math.floor(minr));maxr=Math.min(h-1,Math.ceil(maxr));
+    minc=Math.max(0,Math.floor(minc));maxc=Math.min(w-1,Math.ceil(maxc));
+    for(let r=minr;r<=maxr;r++)for(let c=minc;c<=maxc;c++){
+      if(pointInPoly(r+0.5,c+0.5,pr)){ const k=r*w+c; z[k]=G.zRaw[k]+f.height; burned++; }
+    }
+  });
+  G.z=z; return burned;
+}
+async function toggleBuildings(){
+  const btn=document.getElementById('btnBuildings');
+  if(!G){ alert('Load terrain first (it auto-loads when you pan).'); return; }
+  if(buildingsApplied){
+    G.z=G.zRaw.slice(); buildingsApplied=false; btn.textContent='Add buildings (beta)'; computeBase(); return;
+  }
+  if(map.getZoom()<15){ alert('Zoom in to street level (zoom 15+) first — keeps the building fetch fast and on-scale.'); return; }
+  try{
+    showStatus('Fetching OSM building footprints…');
+    const feats=await fetchBuildings(map.getBounds());
+    if(!feats.length){ hideStatus(); alert('No OSM buildings mapped here.'); return; }
+    const n=burnBuildings(feats); buildingsApplied=true; btn.textContent='Remove buildings ('+n+'px)';
+    computeBase(); hideStatus();
+  }catch(e){ hideStatus(); alert('Couldn’t load buildings ('+e.message+'). The free OSM service can be slow — try again in a moment.'); }
+}
+
+// ============================ DATA: USGS 3DEP ============================
+function showStatus(t){const s=document.getElementById('status');s.style.display='block';s.textContent=t;}
+function hideStatus(){document.getElementById('status').style.display='none';}
+
+// Terrarium-encoded global terrain tiles: keyless, CORS-enabled, ~10 m in the US.
+// elevation_m = R*256 + G + B/256 - 32768
+const TERRAIN_SRCS=[
+  t=>'https://s3.amazonaws.com/elevation-tiles-prod/terrarium/'+t.z+'/'+t.x+'/'+t.y+'.png',
+  t=>'https://terrain.reearth.land/terrarium/ellipsoid/'+t.z+'/'+t.x+'/'+t.y+'.png'
+];
+const elevCache=new Map();
+const lon2tile=(lon,z)=>(lon+180)/360*2**z;
+const lat2tile=(lat,z)=>{const r=lat*Math.PI/180;return (1-Math.asinh(Math.tan(r))/Math.PI)/2*2**z;};
+const tile2lon=(x,z)=>x/2**z*360-180;
+const tile2lat=(y,z)=>Math.atan(Math.sinh(Math.PI*(1-2*y/2**z)))*180/Math.PI;
+
+function loadElevTile(z,x,y){
+  const key=z+'/'+x+'/'+y;
+  if(elevCache.has(key))return Promise.resolve(elevCache.get(key));
+  return new Promise(resolve=>{
+    let si=0;
+    const tryNext=()=>{
+      if(si>=TERRAIN_SRCS.length){const z0=new Float32Array(256*256);elevCache.set(key,z0);return resolve(z0);}
+      const img=new Image();img.crossOrigin='anonymous';
+      img.onload=()=>{
+        const cv=document.createElement('canvas');cv.width=256;cv.height=256;
+        const ctx=cv.getContext('2d');ctx.drawImage(img,0,0);
+        let d;try{d=ctx.getImageData(0,0,256,256).data;}catch(e){si++;return tryNext();}
+        const el=new Float32Array(256*256);
+        for(let i=0;i<256*256;i++)el[i]=(d[i*4]*256+d[i*4+1]+d[i*4+2]/256)-32768;
+        elevCache.set(key,el);resolve(el);
+      };
+      img.onerror=()=>{si++;tryNext();};
+      img.src=TERRAIN_SRCS[si]({z:z,x:x,y:y});
+    };
+    tryNext();
+  });
+}
+
+let fetchSeq=0;
+let analyzedBounds=null, analyzedZoom=null;   // coverage cache so panning within it skips recompute
+async function fetchTerrain(){
+  const myseq=++fetchSeq;
+  const usePoly=evalPoly&&evalPoly.length>=3;
+  // analyze a region larger than the screen so panning within it needs no recompute
+  const b=usePoly?L.latLngBounds(evalPoly):map.getBounds().pad(0.35);
+  let tz=Math.min(15,Math.max(10,map.getZoom()));
+  let x0,x1,y0,y1;
+  const ranges=z=>{x0=Math.floor(lon2tile(b.getWest(),z))-1;x1=Math.floor(lon2tile(b.getEast(),z))+1;
+    y0=Math.floor(lat2tile(b.getNorth(),z))-1;y1=Math.floor(lat2tile(b.getSouth(),z))+1;};
+  ranges(tz);
+  while((x1-x0+1)*(y1-y0+1)>49&&tz>10){tz--;ranges(tz);}
+  const nx=x1-x0+1, ny=y1-y0+1, W=nx*256, H=ny*256;
+  showStatus('Loading terrain… ('+(nx*ny)+' tiles)');
+  const zArr=new Float32Array(W*H);
+  const jobs=[];
+  for(let ty=y0;ty<=y1;ty++)for(let tx=x0;tx<=x1;tx++){
+    jobs.push(loadElevTile(tz,tx,ty).then(el=>{
+      const ox=(tx-x0)*256, oy=(ty-y0)*256;
+      for(let r=0;r<256;r++){const dst=(oy+r)*W+ox, src=r*256;
+        for(let c=0;c<256;c++)zArr[dst+c]=el[src+c];}
+    }));
+  }
+  try{ await Promise.all(jobs); }
+  catch(e){ hideStatus(); alert('Terrain load failed: '+e.message); return; }
+  if(myseq!==fetchSeq)return; // superseded by a newer pan/zoom
+  const west=tile2lon(x0,tz), east=tile2lon(x1+1,tz);
+  const north=tile2lat(y0,tz), south=tile2lat(y1+1,tz);
+  const bounds=L.latLngBounds([south,west],[north,east]);
+  const latC=(north+south)/2;
+  const mpp=156543.03392*Math.cos(latC*Math.PI/180)/2**tz; // ground m/px (lat-corrected)
+  // mask grid cells outside the drawn polygon so we only analyze (and rank) inside it
+  let mask=null;
+  if(usePoly){
+    mask=new Uint8Array(W*H);
+    for(let r=0;r<H;r++){const lat=north+(south-north)*(r/(H-1));
+      for(let c=0;c<W;c++){const lon=west+(east-west)*(c/(W-1));
+        mask[r*W+c]=pointInPoly(lat,lon,evalPoly)?1:0;}}
+  }
+  G={z:zArr,w:W,h:H,dx:mpp,dy:mpp,bounds,latC,mask,zRaw:zArr};
+  if(buildingsApplied){ buildingsApplied=false; const bb=document.getElementById('btnBuildings'); if(bb)bb.textContent='Add buildings (beta)'; }
+  analyzedBounds=usePoly?null:bounds; analyzedZoom=map.getZoom();   // remember coverage
+  hideStatus();analyze();
+}
+
+// ============================ DATA: GeoTIFF upload ============================
+function utmProj(epsg){
+  // build proj4 def for common WGS84/NAD83 UTM codes
+  if(epsg>=32601&&epsg<=32660)return '+proj=utm +zone='+(epsg-32600)+' +datum=WGS84 +units=m +no_defs';
+  if(epsg>=32701&&epsg<=32760)return '+proj=utm +zone='+(epsg-32700)+' +south +datum=WGS84 +units=m +no_defs';
+  if(epsg>=26901&&epsg<=26923)return '+proj=utm +zone='+(epsg-26900)+' +datum=NAD83 +units=m +no_defs';
+  return null;
+}
+async function loadGeoTIFF(file){
+  try{
+    showStatus('Reading DEM '+file.name+'…');
+    const buf=await file.arrayBuffer();
+    const tiff=await GeoTIFF.fromArrayBuffer(buf);
+    const image=await tiff.getImage();
+    const W=image.getWidth(),H=image.getHeight();
+    const bbox=image.getBoundingBox(); // [minX,minY,maxX,maxY] in file CRS
+    const res=image.getResolution();   // [dx,dy]
+    const rasters=await image.readRasters();
+    const nodata=image.getGDALNoData?image.getGDALNoData():null;
+    const raw=rasters[0];
+    const z=Float32Array.from(raw,v=>(nodata!=null&&v===nodata)||v<-1e5||v>1e5||Number.isNaN(v)?0:v);
+    // figure CRS
+    let epsg=null;
+    try{const gk=image.geoKeys;epsg=gk.ProjectedCSTypeGeoKey||gk.GeographicTypeGeoKey||null;}catch(e){}
+    let bounds, dx=Math.abs(res[0]), dy=Math.abs(res[1]), latC;
+    if(epsg===4326){ // already lat/lon degrees
+      bounds=L.latLngBounds([bbox[1],bbox[0]],[bbox[3],bbox[2]]);
+      latC=(bbox[1]+bbox[3])/2;
+      const mPerDeg=111320*Math.cos(latC*Math.PI/180);
+      dx=dx*mPerDeg; dy=dy*111320;
+    }else{
+      const def=utmProj(epsg);
+      if(!def&&epsg){alert('DEM CRS EPSG:'+epsg+' not auto-handled. Reproject to UTM (e.g. 269xx/326xx) or WGS84 and retry. Proceeding may misplace the overlay.');}
+      const p=def||'+proj=utm +zone=11 +datum=NAD83 +units=m +no_defs'; // Oceanside default
+      const sw=proj4(p,'EPSG:4326',[bbox[0],bbox[1]]);
+      const ne=proj4(p,'EPSG:4326',[bbox[2],bbox[3]]);
+      bounds=L.latLngBounds([sw[1],sw[0]],[ne[1],ne[0]]);
+      latC=(sw[1]+ne[1])/2;
+    }
+    G={z,w:W,h:H,dx,dy,bounds,latC,zRaw:z,source:'file'};   // mark so auto-fetch won't overwrite it
+    map.fitBounds(bounds);
+    hideStatus();analyze();
+  }catch(e){hideStatus();alert('Could not read GeoTIFF: '+e.message);}
+}
+
+// ============================ PRECOMPUTED DERIVATIVE TILES ============================
+// Encoding (must match build_terrain_tiles.py): R=slope(0..64°), G=aspect(0..360°), B=tpi(tanh/20)
+const SLOPE_MAX=64.0, TPI_SCALE=20.0;
+let TILE_URL='', tileLayer=null;
+const tileStore={}; // key z/x/y -> {coords,data(RGBA),tile(canvas)}
+
+function scoreDeriv(slopeDeg,aspectDeg,tpi,sun,windFrom,mode){
+  const sR=slopeDeg*Math.PI/180, aR=aspectDeg*Math.PI/180;
+  const sunAltR=sun.alt*Math.PI/180, sunAzR=sun.az*Math.PI/180;
+  let insol=0;
+  if(sun.alt>0){insol=Math.max(0,Math.cos(sR)*Math.sin(sunAltR)+Math.sin(sR)*Math.cos(sunAltR)*Math.cos(sunAzR-aR));}
+  const tNorm=Math.tanh(tpi/TPI_SCALE);          // -1..1, + = ridge/spur
+  const release=Math.max(0,tNorm);
+  const gentle=Math.exp(-((slopeDeg-12)**2)/(2*144));
+  // thermals need sun: gate hard when it's below the horizon (dawn/dusk/night)
+  const dayF = sun.alt>3 ? 1 : (sun.alt>0 ? 0.5 : 0.12);
+  const thermal=(0.6*insol+0.3*release+0.1*gentle)*dayF;
+  let align=Math.max(0,Math.cos(aR-windFrom*Math.PI/180));
+  const steep=Math.exp(-((slopeDeg-28)**2)/(2*144));
+  let slope=align*(0.55*steep+0.45*release);
+  if(slopeDeg<6)slope*=0.2;
+  const combined=Math.max(thermal*0.95,slope);
+  return mode==='thermal'?thermal:mode==='slope'?slope:combined;
+}
+function decodePix(r,g,b){
+  return {slopeDeg:r*SLOPE_MAX/255, aspectDeg:g*360/255,
+          tpi:Math.atanh(Math.max(-0.999,Math.min(0.999,(b-128)/127)))*TPI_SCALE};
+}
+function drawTile(rec){
+  const ctx=rec.tile.getContext('2d');
+  const out=ctx.createImageData(256,256);
+  const sun=sunPosition(CENTER[0],CENTER[1],+month_.value,+hour_.value);
+  const d=rec.data;
+  for(let i=0;i<256*256;i++){
+    const r=d[i*4],g=d[i*4+1],b=d[i*4+2],al=d[i*4+3];
+    if(al===0){out.data[i*4+3]=0;continue;}             // missing data
+    const dec=decodePix(r,g,b);
+    const v=scoreDeriv(dec.slopeDeg,dec.aspectDeg,dec.tpi,sun,WIND,MODE);
+    const[cr,cg,cb]=scoreColor(v);
+    out.data[i*4]=cr;out.data[i*4+1]=cg;out.data[i*4+2]=cb;
+    out.data[i*4+3]=Math.round(Math.pow(Math.max(0,Math.min(1,v)),0.7)*255*0.9);
+  }
+  ctx.putImageData(out,0,0);
+}
+function redrawTiles(){for(const k in tileStore)drawTile(tileStore[k]);}
+const DerivLayer=L.GridLayer.extend({
+  createTile:function(coords,done){
+    const tile=document.createElement('canvas');tile.width=256;tile.height=256;
+    const url=TILE_URL.replace('{z}',coords.z).replace('{x}',coords.x).replace('{y}',coords.y);
+    const img=new Image();img.crossOrigin='anonymous';
+    img.onload=()=>{
+      const tmp=document.createElement('canvas');tmp.width=256;tmp.height=256;
+      const tctx=tmp.getContext('2d');tctx.drawImage(img,0,0);
+      const rec={coords:coords,data:tctx.getImageData(0,0,256,256).data,tile:tile};
+      tileStore[coords.z+'/'+coords.x+'/'+coords.y]=rec;
+      drawTile(rec);done(null,tile);
+    };
+    img.onerror=()=>done(null,tile); // blank outside coverage
+    img.src=url;
+    return tile;
+  }
+});
+function tilePixToLatLng(z,x,y,px,py){
+  const n=2**z;
+  const mx=(x+px/256)/n, my=(y+py/256)/n;
+  const lon=mx*360-180;
+  const lat=Math.atan(Math.sinh(Math.PI*(1-2*my)))*180/Math.PI;
+  return [lat,lon];
+}
+function rankFromTiles(){
+  const sun=sunPosition(CENTER[0],CENTER[1],+month_.value,+hour_.value);
+  const cands=[];
+  for(const k in tileStore){
+    const rec=tileStore[k];const{z,x,y}=rec.coords;const d=rec.data;
+    const S=24; // sample stride within tile
+    for(let py=S;py<256-S;py+=S)for(let px=S;px<256-S;px+=S){
+      const i=(py*256+px)*4;if(d[i+3]===0)continue;
+      const dec=decodePix(d[i],d[i+1],d[i+2]);
+      const v=scoreDeriv(dec.slopeDeg,dec.aspectDeg,dec.tpi,sun,WIND,MODE);
+      if(v<0.5)continue;
+      // local max vs 4 neighbors at stride
+      let isMax=true;
+      for(const[ox,oy]of[[S,0],[-S,0],[0,S],[0,-S]]){
+        const j=((py+oy)*256+(px+ox))*4;
+        const dd=decodePix(d[j],d[j+1],d[j+2]);
+        if(scoreDeriv(dd.slopeDeg,dd.aspectDeg,dd.tpi,sun,WIND,MODE)>v+1e-4){isMax=false;break;}
+      }
+      if(!isMax)continue;
+      const[lat,lon]=tilePixToLatLng(z,x,y,px,py);
+      const th=scoreDeriv(dec.slopeDeg,dec.aspectDeg,dec.tpi,sun,WIND,'thermal');
+      const sl=scoreDeriv(dec.slopeDeg,dec.aspectDeg,dec.tpi,sun,WIND,'slope');
+      cands.push({v,lat,lon,air:airspaceStatus(lat,lon),slopeDeg:dec.slopeDeg,
+        aspect:dec.aspectDeg,isSlope:sl>=th,thermal:th,slope:sl,
+        dist:haversine(CENTER[0],CENTER[1],lat,lon)});
+    }
+  }
+  cands.sort((a,b)=>b.v-a.v);
+  const picked=[];
+  for(const cd of cands){if(picked.some(p=>haversine(p.lat,p.lon,cd.lat,cd.lon)<0.4))continue;picked.push(cd);if(picked.length>=12)break;}
+  const rw={clear:0,caution:0.15,restricted:0.6};
+  picked.sort((a,b)=>(b.v-rw[b.air.level])-(a.v-rw[a.air.level]));
+  drawSpots(picked.slice(0,8));
+}
+function activateTiles(){
+  const url=document.getElementById('tileUrl').value.trim();
+  if(!url||!/\{z\}.*\{x\}.*\{y\}/.test(url)){alert('Enter a tile URL containing {z}/{x}/{y}, e.g. https://host/tiles/{z}/{x}/{y}.png');return;}
+  TILE_URL=url;
+  if(tileLayer)map.removeLayer(tileLayer);
+  for(const k in tileStore)delete tileStore[k];
+  tileLayer=new DerivLayer({opacity:+op_.value/100,minZoom:0,maxZoom:19});
+  tileLayer.on('tileunload',e=>{const c=e.coords;delete tileStore[c.z+'/'+c.x+'/'+c.y];});
+  tileLayer.on('load',()=>rankFromTiles());
+  tileLayer.addTo(map);bringAirToFront();
+  document.getElementById('btnTiles').style.display='none';
+  document.getElementById('btnTilesOff').style.display='block';
+}
+function deactivateTiles(){
+  if(tileLayer){map.removeLayer(tileLayer);tileLayer=null;}
+  for(const k in tileStore)delete tileStore[k];
+  document.getElementById('btnTiles').style.display='block';
+  document.getElementById('btnTilesOff').style.display='none';
+}
+document.getElementById('btnTiles').onclick=activateTiles;
+document.getElementById('btnTilesOff').onclick=deactivateTiles;
+
+// ============================ WIND DIAL ============================
+let WIND=270;
+const dial=document.getElementById('windDial');
+function drawDial(){
+  const ctx=dial.getContext('2d');const w=90,h=90,cx=45,cy=45,R=36;
+  ctx.clearRect(0,0,w,h);
+  ctx.strokeStyle='#2c3a49';ctx.lineWidth=2;ctx.beginPath();ctx.arc(cx,cy,R,0,2*Math.PI);ctx.stroke();
+  ctx.fillStyle='#9fb0c0';ctx.font='9px sans-serif';ctx.textAlign='center';
+  ctx.fillText('N',cx,cy-R+9);ctx.fillText('S',cx,cy+R-3);ctx.fillText('E',cx+R-5,cy+3);ctx.fillText('W',cx-R+5,cy+3);
+  // arrow points the way wind blows TO (from WIND direction)
+  const a=(WIND)*Math.PI/180;
+  const fx=cx+Math.sin(a)*R*0.0,fy=cy-Math.cos(a)*R*0.0;
+  const tailx=cx+Math.sin(a)*R*0.8, taily=cy-Math.cos(a)*R*0.8; // wind source point
+  const headx=cx-Math.sin(a)*R*0.8, heady=cy+Math.cos(a)*R*0.8; // blows toward opposite
+  ctx.strokeStyle='#4ea1ff';ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(tailx,taily);ctx.lineTo(headx,heady);ctx.stroke();
+  ctx.fillStyle='#4ea1ff';ctx.beginPath();ctx.arc(tailx,taily,4,0,2*Math.PI);ctx.fill();
+}
+function setWind(deg,fromUser){
+  WIND=((deg%360)+360)%360;
+  document.getElementById('windLbl').textContent=compass(WIND)+' ('+WIND.toFixed(0)+'°)';
+  drawDial();
+  if(fromUser){                                   // manual drag overrides live wind
+    const lw=document.getElementById('liveWind'); if(lw.checked){lw.checked=false; setLiveUI(false);}
+    onWindChanged();
+  }
+}
+function dialPick(ev){
+  const rect=dial.getBoundingClientRect();
+  const x=(ev.touches?ev.touches[0].clientX:ev.clientX)-rect.left-45;
+  const y=(ev.touches?ev.touches[0].clientY:ev.clientY)-rect.top-45;
+  let deg=Math.atan2(x,-y)*180/Math.PI;setWind(deg,true);
+}
+let dialDrag=false;
+dial.addEventListener('mousedown',e=>{dialDrag=true;dialPick(e);});
+window.addEventListener('mousemove',e=>{if(dialDrag)dialPick(e);});
+window.addEventListener('mouseup',()=>dialDrag=false);
+dial.addEventListener('touchstart',e=>{dialPick(e);e.preventDefault();});
+dial.addEventListener('touchmove',e=>{dialPick(e);e.preventDefault();});
+
+// ---- wind controls: live toggle, forecast slider, manual speed ----
+let _windTimer=null;
+function onWindChanged(){            // wind direction/speed changed -> recompute flow, then rescore
+  clearTimeout(_windTimer);
+  _windTimer=setTimeout(()=>{ if(G){ computeWind(); rescore(); } updateSim(); updateVerdict(); },120);
+}
+function updateWindLabel(){
+  const live=document.getElementById('liveWind').checked;
+  if(live && windCache){
+    const i=Math.min(windCache.dir10.length-1,Math.max(0,+document.getElementById('fhour').value));
+    const t=windCache.time[i]||'';
+    const d=Number.isFinite(windCache.dir10[i])?windCache.dir10[i]:WIND;
+    const s=Number.isFinite(windCache.spd10[i])?windCache.spd10[i]:0;
+    document.getElementById('fhourLbl').textContent=t.replace('T',' ')+'  ·  '+compass(d)+' '+Math.round(d)+'° @ '+s.toFixed(1)+' m/s';
+    setWind(d,false);                 // reflect live direction on the dial (no manual override)
+    document.getElementById('wspdLbl').textContent=(s||0).toFixed(1)+' m/s';
+    // sync the SUN (month/hour) to the forecast timestamp so insolation matches the wind time
+    if(t){
+      const mo=+t.slice(5,7), hr=+t.slice(11,13);
+      if(mo>=1&&mo<=12){ month_.value=mo; document.getElementById('moLbl').textContent=MONTHS[mo-1]; }
+      const hrC=Math.max(6,Math.min(20,hr)); hour_.value=hrC;
+      document.getElementById('hrLbl').textContent=(hrC<10?'0':'')+hrC+':00';
+    }
+  }
+}
+function setLiveUI(on){
+  document.getElementById('liveBox').style.display=on?'block':'none';
+  document.getElementById('wspdRow').style.display=on?'none':'flex';
+}
+document.getElementById('liveWind').addEventListener('change',async e=>{
+  if(e.target.checked){
+    try{
+      showStatus('Fetching wind forecast…');
+      await getWindForecast(CENTER[0],CENTER[1]);
+      const fh=document.getElementById('fhour');
+      fh.max=String(windCache.time.length-1);
+      fh.value=String(nearestHourIndex(windCache.time));
+      setLiveUI(true); updateWindLabel(); hideStatus(); onWindChanged();
+    }catch(err){
+      e.target.checked=false; setLiveUI(false); hideStatus();
+      alert('Could not fetch live wind ('+err.message+'). Using the manual dial instead.');
+    }
+  } else { setLiveUI(false); onWindChanged(); }
+});
+document.getElementById('fhour').oninput=()=>{ updateWindLabel(); onWindChanged(); };
+document.getElementById('wspd').oninput=()=>{ document.getElementById('wspdLbl').textContent=document.getElementById('wspd').value+' m/s'; onWindChanged(); };
+
+// ============================ UI WIRING ============================
+let MODE='combined';   // month_/hour_/op_/MONTHS are declared earlier (hoisted)
+document.getElementById('modeSeg').addEventListener('click',e=>{
+  if(e.target.tagName!=='BUTTON')return;
+  [...e.currentTarget.children].forEach(b=>b.classList.remove('active'));
+  e.target.classList.add('active');MODE=e.target.dataset.mode;
+  if(tileLayer){redrawTiles();rankFromTiles();}        // mode only re-renders, no recompute
+  else if(A){renderOverlay();rankSpots();}
+});
+month_.oninput=()=>{document.getElementById('moLbl').textContent=MONTHS[month_.value-1];onParamsChanged();};
+hour_.oninput=()=>{document.getElementById('hrLbl').textContent=(hour_.value<10?'0':'')+hour_.value+':00';onParamsChanged();};
+op_.oninput=()=>{document.getElementById('opLbl').textContent=op_.value+'%';if(overlay)overlay.setOpacity(+op_.value/100);if(tileLayer)tileLayer.setOpacity(+op_.value/100);};
+document.getElementById('baseSeg').addEventListener('click',e=>{
+  if(e.target.tagName!=='BUTTON')return;
+  [...e.currentTarget.children].forEach(b=>b.classList.remove('active'));
+  e.target.classList.add('active'); setBase(e.target.dataset.base);
+});
+document.getElementById('btnFetch').onclick=fetchTerrain;
+document.getElementById('btnEpic').onclick=()=>searchEpic();
+document.getElementById('btnEpicHere').onclick=epicFromHere;
+document.getElementById('btnLocate').onclick=toggleLocate;
+document.getElementById('btnLogHere').onclick=logFlightHere;
+document.getElementById('btnBuildings').onclick=toggleBuildings;
+document.getElementById('lbSort').onchange=renderLeaderboard;
+(function(){const t=document.getElementById('lbPins'); try{if(localStorage.getItem('dlgShowLbPins')==='0')t.checked=false;}catch(e){}
+  t.onchange=()=>{ try{localStorage.setItem('dlgShowLbPins',t.checked?'1':'0');}catch(e){} renderLeaderboard(); };})();
+document.getElementById('btnLogFlight').onclick=startLogFlight;
+document.getElementById('placeHere').onclick=()=>{ const c=map.getCenter(); openFlightForm(c.lat,c.lng); };
+document.getElementById('btnExportFlights').onclick=exportFlights;
+document.getElementById('btnImportFlights').onclick=()=>document.getElementById('fileFlights').click();
+document.getElementById('fileFlights').onchange=e=>{ if(e.target.files[0])importFlights(e.target.files[0]); e.target.value=''; };
+document.getElementById('radiusMi').onkeydown=e=>{if(e.key==='Enter')searchEpic();};
+document.getElementById('zipInput').onkeydown=e=>{if(e.key==='Enter')searchEpic();};
+// auto-load terrain as the user pans/zooms (debounced)
+let moveTimer=null;
+map.on('moveend',()=>{
+  if(tileLayer)return;                                   // hosted-tile mode handles itself
+  if(evalPoly)return;                                    // a drawn area is fixed; don't auto-refetch
+  if(G&&G.source==='file')return;                        // don't overwrite an uploaded DEM
+  if(!document.getElementById('autoTerrain').checked)return;
+  clearTimeout(moveTimer);
+  moveTimer=setTimeout(()=>{
+    if(map.getZoom()<11)return;
+    // still inside the already-analyzed area at the same zoom? reuse it — just re-rank for the new view
+    if(analyzedBounds && analyzedZoom===map.getZoom() && analyzedBounds.contains(map.getBounds())){
+      if(A) rankSpots();
+      return;
+    }
+    fetchTerrain();
+  },400);
+});
+
+const drop=document.getElementById('drop'),fileIn=document.getElementById('file');
+drop.onclick=()=>fileIn.click();
+fileIn.onchange=()=>{if(fileIn.files[0])loadGeoTIFF(fileIn.files[0]);};
+['dragover','dragenter'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add('hover');}));
+['dragleave','drop'].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove('hover');}));
+drop.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f)loadGeoTIFF(f);});
+
+// click map -> local readout
+map.on('click',e=>{
+  if(drawing)return;                 // ignore readout while drawing an area
+  if(loggingFlight){ openFlightForm(e.latlng.lat,e.latlng.lng); return; }   // tap to place
+  if(!G||!A)return;
+  const {w,h,bounds}=G;
+  const fx=(e.latlng.lng-bounds.getWest())/(bounds.getEast()-bounds.getWest());
+  const fy=(bounds.getNorth()-e.latlng.lat)/(bounds.getNorth()-bounds.getSouth());
+  if(fx<0||fx>1||fy<0||fy>1)return;
+  const c=Math.round(fx*(w-1)),r=Math.round(fy*(h-1));const k=r*w+c;
+  const air=airspaceStatus(e.latlng.lat,e.latlng.lng);
+  let windLine='';
+  if(WF){
+    const lift=(A.lift[k]*100|0), rotor=(A.rotor[k]*100|0);
+    windLine='Modeled lift '+lift+'/100 · rotor '+rotor+'/100'
+      +(rotor>50?' <b style="color:#ef5e6b">⚠ turbulent lee</b>':'')+'<br>'
+      +'Wind: '+compass(WF.fromDeg)+' @ '+WF.speed.toFixed(1)+' m/s<br>';
+  }
+  const airCol=air.level==='restricted'?'#ef5e6b':air.level==='caution'?'#f5b942':'#2fd49a';
+  L.popup().setLatLng(e.latlng).setContent(
+    '<b>Spot readout</b><br>'
+    +'Thermal '+(A.thermal[k]*100|0)+'/100 · Slope '+(A.slope[k]*100|0)+'/100<br>'
+    +'Slope '+A.slopeDeg[k].toFixed(0)+'°, faces '+compass(A.aspect[k])+' ('+A.aspect[k].toFixed(0)+'°)<br>'
+    +windLine
+    +'Airspace: <b style="color:'+airCol+'">'+air.level.toUpperCase()+'</b> — '+air.reason
+  ).openOn(map);
+});
+
+// ============================ POLYGON AREA-OF-INTEREST ============================
+// (evalPoly/drawing are referenced by fetchTerrain & handlers above — declared here,
+//  before any of them actually run at startup.)
+function setOverlayClickThrough(on){
+  // let map clicks pass through airspace/terrain overlays while drawing,
+  // so vertices can be placed even on top of no-fly zones
+  const p=map.getPane('overlayPane'); if(p) p.style.pointerEvents=on?'none':'';
+}
+function startDraw(){
+  closeSide();
+  drawing=true; drawPts=[];
+  if(drawLine){map.removeLayer(drawLine);drawLine=null;}
+  map.doubleClickZoom.disable();
+  setOverlayClickThrough(true);
+  document.getElementById('map').style.cursor='crosshair';
+  showStatus('Click to drop points · double-click to finish · Esc to cancel');
+}
+function updateDrawLine(){
+  if(drawLine)map.removeLayer(drawLine);
+  const pts=drawPts.concat(drawPts.length>1?[drawPts[0]]:[]);
+  drawLine=L.polyline(pts,{color:'#4ea1ff',weight:2,dashArray:'5 5'}).addTo(map);
+}
+function finishDraw(){
+  if(!drawing)return;
+  drawing=false; map.doubleClickZoom.enable(); setOverlayClickThrough(false); document.getElementById('map').style.cursor='';
+  if(drawPts.length<3){ if(drawLine){map.removeLayer(drawLine);drawLine=null;} hideStatus(); return; }
+  evalPoly=drawPts.slice();
+  if(drawLine){map.removeLayer(drawLine);drawLine=null;}
+  if(evalLayer)map.removeLayer(evalLayer);
+  evalLayer=L.polygon(evalPoly,{color:'#4ea1ff',weight:2,fillColor:'#4ea1ff',fillOpacity:.05}).addTo(map);
+  bringAirToFront();
+  document.getElementById('btnClearArea').style.display='block';
+  hideStatus();
+  fetchTerrain();   // analyze just this area
+}
+function clearArea(){
+  evalPoly=null; drawPts=[];
+  if(evalLayer){map.removeLayer(evalLayer);evalLayer=null;}
+  document.getElementById('btnClearArea').style.display='none';
+}
+map.on('click',e=>{ if(!drawing)return; drawPts.push([e.latlng.lat,e.latlng.lng]); updateDrawLine(); });
+map.on('dblclick',()=>{ if(drawing) finishDraw(); });
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape'&&drawing){
+    drawing=false; map.doubleClickZoom.enable(); setOverlayClickThrough(false); document.getElementById('map').style.cursor='';
+    if(drawLine){map.removeLayer(drawLine);drawLine=null;} drawPts=[]; hideStatus();
+  }
+  if(e.key==='Escape'&&loggingFlight) cancelLogFlight();
+});
+document.getElementById('btnDraw').onclick=startDraw;
+document.getElementById('btnClearArea').onclick=clearArea;
+
+// default the sun to the current local date/time (clamped to the slider's daylight range)
+(function(){const now=new Date(), mo=now.getMonth()+1, hr=Math.max(6,Math.min(20,now.getHours()));
+  month_.value=mo; document.getElementById('moLbl').textContent=MONTHS[mo-1];
+  hour_.value=hr; document.getElementById('hrLbl').textContent=(hr<10?'0':'')+hr+':00';})();
+drawDial();setWind(270);
+updateSim();       // initial flight estimate
+updateConditions();// thermal-forecast placeholder until live wind is on
+updateVerdict();   // flyable-now placeholder until live wind is on
+renderFlights();   // show any previously logged flights
+initCommunity();   // fetch community board if connected, else show local leaderboard
+// auto-load terrain for the default view on startup
+fetchTerrain();
+</script>
+</body>
+</html>
