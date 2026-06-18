@@ -450,7 +450,7 @@
       <div class="group">
         <h2><span class="step">3</span> Wind</h2>
         <label class="row" style="margin:0 0 6px"><span>Use live wind (Open-Meteo)</span>
-          <input type="checkbox" id="liveWind"></label>
+          <input type="checkbox" id="liveWind" checked></label>
         <div id="liveBox" style="display:none;margin-bottom:8px">
           <input type="range" id="fhour" min="0" max="47" value="0" style="width:100%">
           <div id="fhourLbl" style="font-size:10.5px;color:var(--accent-2);font-family:var(--mono);margin-top:4px">—</div>
@@ -1361,7 +1361,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.3', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.4', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
@@ -1524,12 +1524,12 @@ function showUserLoc(p){
   } else userMarker.setLatLng(ll);
 }
 function geoErr(e){ hideStatus(); alert('Location unavailable: '+((e&&e.message)||'')+'\nOn a phone, allow location access and use the https site (not a local file).'); }
-function locateOnce(cb){
-  if(!navigator.geolocation){ alert('Geolocation isn’t supported on this device/browser.'); return; }
-  showStatus('Getting your location…');
+function locateOnce(cb,silent){
+  if(!navigator.geolocation){ if(!silent)alert('Geolocation isn’t supported on this device/browser.'); return; }
+  if(!silent)showStatus('Getting your location…');
   navigator.geolocation.getCurrentPosition(p=>{ showUserLoc(p); hideStatus();
     map.setView([userLoc.lat,userLoc.lon], Math.max(map.getZoom(),14)); if(cb)cb();
-  }, geoErr, {enableHighAccuracy:true,timeout:15000,maximumAge:30000});
+  }, e=>{ if(silent)hideStatus(); else geoErr(e); }, {enableHighAccuracy:true,timeout:15000,maximumAge:30000});
 }
 function toggleLocate(){
   const btn=document.getElementById('btnLocate');
@@ -2127,6 +2127,10 @@ renderFlights();   // show any previously logged flights
 initCommunity();   // fetch community board if connected, else show local leaderboard
 // auto-load terrain for the default view on startup
 fetchTerrain();
+// live wind is on by default — kick off the forecast fetch
+if(document.getElementById('liveWind').checked){ try{ document.getElementById('liveWind').dispatchEvent(new Event('change')); }catch(e){} }
+// on phones, locate the pilot by default (silent — no popup if denied)
+if(window.innerWidth<=760){ try{ locateOnce(null,true); }catch(e){} }
 </script>
 </body>
 </html>
