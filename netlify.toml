@@ -1,2 +1,3 @@
 [build]
+  command = "sed -i \"s/__COMMIT__/${COMMIT_REF:-local}/g\" index.html"
   publish = "."

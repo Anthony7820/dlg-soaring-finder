@@ -306,6 +306,12 @@
   .lb-marker{width:24px;height:24px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-weight:800;font-size:12px;
     background:linear-gradient(180deg,#ffd66b,#f5b942);color:#3a2a00;border:2px solid #3a2a00;box-shadow:0 2px 8px -2px rgba(0,0,0,.7),0 0 0 1px rgba(245,185,66,.5);transition:transform .12s ease}
   .lb-marker.hl{transform:scale(1.5);box-shadow:0 0 0 4px rgba(245,185,66,.45),0 8px 18px -4px rgba(0,0,0,.75);z-index:1000}
+  .lb-mod{margin-left:6px;border:1px solid var(--line);background:var(--panel3);color:var(--muted);border-radius:6px;padding:2px 6px;font-size:11px;cursor:pointer;line-height:1}
+  .lb-mod:hover{border-color:var(--accent)}
+  .lb-del{color:var(--bad)}
+  .lb-row.lb-hidden{opacity:.45}
+  #appver{text-align:center;font-size:10px;color:var(--faint);padding:12px 0 6px}
+  #appver a{color:var(--faint);font-family:var(--mono);text-decoration:none;border-bottom:1px dotted var(--line)}
   .user-dot{width:16px;height:16px;border-radius:50%;background:#4ea1ff;border:2px solid #fff;box-shadow:0 0 0 4px rgba(78,161,255,.35),0 0 10px rgba(78,161,255,.6);animation:userPulse 2s ease-in-out infinite}
   @keyframes userPulse{0%,100%{box-shadow:0 0 0 4px rgba(78,161,255,.35),0 0 10px rgba(78,161,255,.6)}50%{box-shadow:0 0 0 8px rgba(78,161,255,.1),0 0 14px rgba(78,161,255,.85)}}
   #btnLocate{position:fixed;right:14px;bottom:62px;z-index:1200;width:42px;height:42px;border-radius:50%;border:1px solid var(--line);background:var(--panel2);color:var(--accent-2);font-size:18px;cursor:pointer;box-shadow:var(--shadow);display:flex;align-items:center;justify-content:center}
@@ -516,6 +522,7 @@
           <option value="spot">Best per spot</option>
         </select>
         <label class="row" style="margin:0 0 8px"><span>Show on map</span><input type="checkbox" id="lbPins" checked></label>
+        <div id="adminBar" style="margin-bottom:6px"></div>
         <div id="leaderboard"></div>
       </div>
 
@@ -547,6 +554,7 @@
           <b>Safety / legal:</b> Airspace data here is approximate and for planning only. 92057 borders <b>Camp Pendleton</b> (military, no overflight), <b>KOKB</b> and <b>KCRQ</b> airports. Before flying, always confirm with the FAA <a class="lnk" href="https://www.faa.gov/uas/getting_started/b4ufly" target="_blank">B4UFLY</a> app, LAANC, and current NOTAMs. Recreational flyers must stay ≤400 ft AGL, within line of sight, and follow the FAA Recreational rules &amp; a CBO safety code. I'm not a legal authority — verify before you fly.
         </div>
       </div>
+      <div id="appver"></div>
     </div>
   </div>
   <div id="mapwrap">
@@ -1315,22 +1323,71 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // until then the leaderboard runs on your own local flights. The anon key is public-safe
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
+// version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
+const APP_VERSION='v1.0', APP_COMMIT='__COMMIT__';
+function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
+  const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
+  el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
+}
 const communityEnabled=()=>!!(SUPA_URL&&SUPA_KEY);
 let communityFlights=[];
 const SNAP_M=250;   // flights within 250 m count as the same spot (same field, different sides)
 function getPilot(){ try{return localStorage.getItem('dlgPilot')||'';}catch(e){return '';} }
 function setPilot(v){ try{localStorage.setItem('dlgPilot',(v||'').slice(0,32));}catch(e){} }
 function normFlight(f){ // unify local + supabase row shapes
-  return {pilot:f.pilot||'anon', lat:+f.lat, lon:+f.lon, date:f.date||'',
+  return {id:f.id, hidden:!!f.hidden, pilot:f.pilot||'anon', lat:+f.lat, lon:+f.lon, date:f.date||'',
     aircraft:f.aircraft||'DLG',
     maxAltFt: f.maxAltFt!=null?f.maxAltFt:(f.max_alt_ft!=null?f.max_alt_ft:null),
     maxTimeMin: f.maxTimeMin!=null?f.maxTimeMin:(f.max_time_min!=null?f.max_time_min:null)};
 }
+// ---- owner moderation via Supabase magic-link auth (only the owner email can hide/delete) ----
+const OWNER_EMAIL='anthony7820@gmail.com';
+let authToken=null, authEmail=null;
+function isOwner(){ return !!authEmail && authEmail.toLowerCase()===OWNER_EMAIL; }
+function loadAuth(){
+  if(location.hash && location.hash.indexOf('access_token=')>=0){
+    const p=new URLSearchParams(location.hash.slice(1)), tok=p.get('access_token');
+    if(tok){ try{localStorage.setItem('dlgAuth',tok);}catch(e){} history.replaceState(null,'',location.pathname+location.search); }
+  }
+  try{ authToken=localStorage.getItem('dlgAuth'); }catch(e){}
+  authEmail=null;
+  if(authToken){ try{
+    const c=JSON.parse(atob(authToken.split('.')[1].replace(/-/g,'+').replace(/_/g,'/')));
+    if(c.exp && Date.now()/1000>c.exp){ authToken=null; localStorage.removeItem('dlgAuth'); } else authEmail=c.email;
+  }catch(e){ authToken=null; } }
+}
+async function sendMagicLink(email){
+  if(!email||email.indexOf('@')<0){ alert('Enter a valid email.'); return; }
+  try{
+    const r=await fetch(SUPA_URL+'/auth/v1/otp?redirect_to='+encodeURIComponent(location.origin+location.pathname),
+      {method:'POST',headers:{apikey:SUPA_KEY,'Content-Type':'application/json'},body:JSON.stringify({email,create_user:true})});
+    if(r.ok) alert('Sign-in link sent to '+email+'. Open it on this device to moderate.');
+    else alert('Could not send link: '+(await r.text()).slice(0,140));
+  }catch(e){ alert('Error: '+e.message); }
+}
+function signOut(){ authToken=null; authEmail=null; try{localStorage.removeItem('dlgAuth');}catch(e){} renderAdminBar(); renderLeaderboard(); }
+async function adminHide(id,hidden){ if(!isOwner()||id==null)return;
+  await fetch(SUPA_URL+'/rest/v1/flights?id=eq.'+id,{method:'PATCH',headers:{apikey:SUPA_KEY,Authorization:'Bearer '+authToken,'Content-Type':'application/json',Prefer:'return=minimal'},body:JSON.stringify({hidden})});
+  await fetchCommunity(); renderLeaderboard();
+}
+async function adminDelete(id){ if(!isOwner()||id==null)return; if(!confirm('Permanently delete flight #'+id+'?'))return;
+  await fetch(SUPA_URL+'/rest/v1/flights?id=eq.'+id,{method:'DELETE',headers:{apikey:SUPA_KEY,Authorization:'Bearer '+authToken,Prefer:'return=minimal'}});
+  await fetchCommunity(); renderLeaderboard();
+}
+function renderAdminBar(){
+  const el=document.getElementById('adminBar'); if(!el)return;
+  if(isOwner()){ el.innerHTML='<span class="lb-scope">🛡️ Owner — moderation on · <a href="#" id="signOut" class="lnk">sign out</a></span>';
+    document.getElementById('signOut').onclick=e=>{e.preventDefault();signOut();}; }
+  else { el.innerHTML='<a href="#" id="modLink" class="lnk" style="font-size:11px">Owner sign-in to moderate</a>';
+    document.getElementById('modLink').onclick=e=>{e.preventDefault(); const em=prompt('Owner email for a sign-in link:', OWNER_EMAIL); if(em)sendMagicLink(em.trim());}; }
+}
+window.adminHide=adminHide; window.adminDelete=adminDelete; window.signOut=signOut;
 async function fetchCommunity(){
   if(!communityEnabled())return [];
   try{
-    const r=await fetch(SUPA_URL+'/rest/v1/flights?select=*&hidden=eq.false&order=created_at.desc&limit=2000',
-      {headers:{apikey:SUPA_KEY,Authorization:'Bearer '+SUPA_KEY}});
+    const filt = isOwner()?'':'&hidden=eq.false';   // owner also sees hidden rows (to unhide)
+    const r=await fetch(SUPA_URL+'/rest/v1/flights?select=*'+filt+'&order=created_at.desc&limit=2000',
+      {headers:{apikey:SUPA_KEY,Authorization:'Bearer '+(isOwner()&&authToken?authToken:SUPA_KEY)}});
     if(!r.ok)return []; communityFlights=(await r.json()).map(normFlight); return communityFlights;
   }catch(e){ return []; }
 }
@@ -1364,22 +1421,24 @@ function renderLeaderboard(){
   let rows=[];
   if(sort==='alt'){
     rows=flights.filter(f=>f.maxAltFt!=null).sort((a,b)=>b.maxAltFt-a.maxAltFt).slice(0,25)
-      .map(f=>({who:f.pilot,val:Math.round(f.maxAltFt)+' ft',sub:f.aircraft+' · '+(f.date||''),lat:f.lat,lon:f.lon}));
+      .map(f=>({who:f.pilot,val:Math.round(f.maxAltFt)+' ft',sub:f.aircraft+' · '+(f.date||''),lat:f.lat,lon:f.lon,id:f.id,hidden:f.hidden}));
   } else if(sort==='time'){
     rows=flights.filter(f=>f.maxTimeMin!=null).sort((a,b)=>b.maxTimeMin-a.maxTimeMin).slice(0,25)
-      .map(f=>({who:f.pilot,val:(+f.maxTimeMin).toFixed(1)+' min',sub:f.aircraft+' · '+(f.date||''),lat:f.lat,lon:f.lon}));
+      .map(f=>({who:f.pilot,val:(+f.maxTimeMin).toFixed(1)+' min',sub:f.aircraft+' · '+(f.date||''),lat:f.lat,lon:f.lon,id:f.id,hidden:f.hidden}));
   } else { // best per spot (clustered, deduped by buffer)
     const cl=clusterSpots(flights.filter(f=>f.maxAltFt!=null||f.maxTimeMin!=null));
     rows=cl.map(c=>{
       const best=c.flights.slice().sort((a,b)=>(b.maxAltFt||0)-(a.maxAltFt||0))[0];
       return {who:best.pilot,val:(best.maxAltFt!=null?Math.round(best.maxAltFt)+' ft':((+best.maxTimeMin).toFixed(1)+' min')),
-        sub:nearestSpotName(c.lat,c.lon)+' · '+c.flights.length+' flight'+(c.flights.length>1?'s':''),lat:c.lat,lon:c.lon,best:best.maxAltFt||0};
+        sub:nearestSpotName(c.lat,c.lon)+' · '+c.flights.length+' flight'+(c.flights.length>1?'s':''),lat:c.lat,lon:c.lon,best:best.maxAltFt||0,id:best.id,hidden:best.hidden};
     }).sort((a,b)=>b.best-a.best).slice(0,25);
   }
   lbMarkers.clearLayers(); lbMarkerById={};
   const scope = communityEnabled()?'community':'your flights only';
+  renderAdminBar();
   if(!rows.length){ host.innerHTML='<div class="legend">No ranked flights yet ('+scope+'). Log a flight with a max altitude or time to get on the board.</div>'; return; }
   const showPins = !document.getElementById('lbPins') || document.getElementById('lbPins').checked;
+  const owner=isOwner();
   host.innerHTML='<div class="lb-scope">'+(communityEnabled()?'🌐 Community board':'📋 Your flights — connect the shared log for the community board')+'</div>';
   rows.forEach((r,i)=>{
     const key='lb'+i, n=i+1;
@@ -1388,10 +1447,13 @@ function renderLeaderboard(){
         .addTo(lbMarkers).bindPopup('<b>#'+n+' · '+(r.who||'anon')+'</b><br>'+r.val+'<br>'+r.sub);
       lbMarkerById[key]=m;
     }
-    const d=document.createElement('div'); d.className='lb-row';
-    d.innerHTML='<span class="lb-rank">'+n+'</span><span class="lb-who">'+(r.who||'anon')+'</span>'
-      +'<span class="lb-val">'+r.val+'</span>';
-    d.title=r.sub;
+    const d=document.createElement('div'); d.className='lb-row'+(r.hidden?' lb-hidden':'');
+    let h='<span class="lb-rank">'+n+'</span><span class="lb-who">'+(r.who||'anon')+(r.hidden?' (hidden)':'')+'</span><span class="lb-val">'+r.val+'</span>';
+    if(owner && r.id!=null){
+      h+='<button class="lb-mod" title="'+(r.hidden?'Unhide':'Hide')+'" onclick="event.stopPropagation();adminHide('+r.id+','+(r.hidden?'false':'true')+')">'+(r.hidden?'👁':'🚫')+'</button>'
+        +'<button class="lb-mod lb-del" title="Delete" onclick="event.stopPropagation();adminDelete('+r.id+')">✕</button>';
+    }
+    d.innerHTML=h; d.title=r.sub;
     d.onmouseenter=()=>lbHover(key,true);
     d.onmouseleave=()=>lbHover(key,false);
     d.onclick=()=>{ closeSide(); map.setView([r.lat,r.lon],15); const m=lbMarkerById[key]; if(m)m.openPopup(); };
@@ -1991,6 +2053,8 @@ drawDial();setWind(270);
 updateSim();       // initial flight estimate
 updateConditions();// thermal-forecast placeholder until live wind is on
 updateVerdict();   // flyable-now placeholder until live wind is on
+renderVersion();   // show app version + deployed commit
+loadAuth();        // restore owner sign-in (e.g. after a magic-link redirect)
 renderFlights();   // show any previously logged flights
 initCommunity();   // fetch community board if connected, else show local leaderboard
 // auto-load terrain for the default view on startup
