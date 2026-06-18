@@ -39,6 +39,23 @@
     border:1px solid var(--line);background:var(--panel2);color:var(--text);align-items:center;justify-content:center;
     font-size:19px;box-shadow:var(--shadow);cursor:pointer}
   #sideBackdrop{display:none;position:absolute;inset:0;background:rgba(0,0,0,.5);z-index:1400}
+  /* persistent center crosshair — marks the forecast/analysis reference point */
+  #centerCross{position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1140;pointer-events:none;width:24px;height:24px}
+  #centerCross::before,#centerCross::after{content:"";position:absolute;background:rgba(255,255,255,.7);box-shadow:0 0 2px rgba(0,0,0,.9)}
+  #centerCross::before{left:50%;top:0;width:1.5px;height:24px;transform:translateX(-50%)}
+  #centerCross::after{top:50%;left:0;height:1.5px;width:24px;transform:translateY(-50%)}
+  #centerCross.hide{display:none}
+  /* mobile flyable banner — pinned to the map, follows the crosshair */
+  #flyBanner{display:none}
+  .fb-dot{width:11px;height:11px;border-radius:50%;flex:0 0 auto;box-shadow:0 0 7px currentColor}
+  .fb-dot.g{background:#2fd49a;color:#2fd49a}.fb-dot.o{background:#f5b942;color:#f5b942}.fb-dot.r{background:#ef5e6b;color:#ef5e6b}.fb-dot.idle{background:#64748b;color:transparent}
+  .fb-txt{font-weight:800}.fb-sub{color:var(--muted);font-weight:400}
+  @media (max-width:760px){
+    #flyBanner{display:flex;position:absolute;top:11px;left:64px;right:58px;z-index:1180;align-items:center;gap:9px;
+      background:rgba(11,15,22,.92);backdrop-filter:blur(5px);border:1px solid var(--line);border-radius:11px;
+      padding:8px 11px;font-size:12px;box-shadow:var(--shadow);cursor:pointer;overflow:hidden;white-space:nowrap}
+    #flyBanner>span:last-child{overflow:hidden;text-overflow:ellipsis}
+  }
   #reticle{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);z-index:1150;pointer-events:none;color:var(--accent-2);font-size:26px;text-shadow:0 0 6px rgba(0,0,0,.8),0 0 2px #000;font-weight:700}
   #placeHere{display:none;position:absolute;bottom:18px;left:50%;transform:translateX(-50%);z-index:1150;border:none;border-radius:11px;padding:11px 18px;font-size:13px;font-weight:700;color:var(--ink);background:linear-gradient(180deg,var(--accent-2),var(--accent));box-shadow:0 8px 22px -8px rgba(78,161,255,.8),var(--shadow);cursor:pointer}
   /* ---- phone / narrow screens: panel becomes a slide-in drawer over the map ---- */
@@ -559,6 +576,8 @@
   </div>
   <div id="mapwrap">
     <div id="map"></div>
+    <div id="flyBanner"></div>
+    <div id="centerCross" aria-hidden="true"></div>
     <div id="reticle" aria-hidden="true">✛</div>
     <button id="placeHere">Place flight here</button>
     <div id="status"></div>
@@ -880,11 +899,16 @@ function flyHour(i){
   return s;
 }
 function pad2(h){return (h<10?'0':'')+h;}
+function setFlyBanner(dot,txt,sub){
+  const b=document.getElementById('flyBanner'); if(!b)return;
+  b.innerHTML='<span class="fb-dot '+dot+'"></span><span><span class="fb-txt">'+txt+'</span> <span class="fb-sub">'+(sub?'· '+sub:'')+'</span></span>';
+}
 function updateVerdict(){
   const box=document.getElementById('verdict'); if(!box)return;
   if(!(document.getElementById('liveWind').checked && windCache && windCache.spd10)){
     box.className='verdict v-idle';
     box.innerHTML='<div class="v-head">Is it flyable?</div><div class="v-sub">Turn on live wind for a “flyable now” read + today’s best window.</div>';
+    setFlyBanner('idle','Live conditions','tap to enable');
     return;
   }
   const start=nearestHourIndex(windCache.time), N=Math.min(12, windCache.time.length-start);
@@ -906,6 +930,9 @@ function updateVerdict(){
     +'<div class="vtl">'+cells.map(c=>'<span class="vc '+(c.s>=0.7?'g':c.s>=0.35?'o':'r')+'" title="'+pad2(c.hr)+':00"></span>').join('')+'</div>'
     +'<div class="vtl-lbl"><span>'+pad2(cells[0].hr)+':00</span><span>'+(cells.length?pad2(cells[cells.length-1].hr)+':00':'')+'</span></div>'
     +'<div class="vtl-lbl" style="justify-content:center;margin-top:3px">📍 map-view center · '+loc+'</div>';
+  setFlyBanner(level==='good'?'g':level==='ok'?'o':'r',
+    (level==='good'?'Flyable now':level==='ok'?'Marginal':'Tough'),
+    pad2(cells[0].hr)+':00 · '+loc);
 }
 // run the flow solve on a downsampled grid; store coarse fields in WF
 let WF=null;
@@ -1239,7 +1266,8 @@ function drawEpic(top, center){
 let loggingFlight=false, flightMarkers=L.layerGroup().addTo(map), flightMarkerById={};
 function loadFlights(){ try{return JSON.parse(localStorage.getItem('dlgFlights')||'[]');}catch(e){return [];} }
 function saveFlights(a){ try{localStorage.setItem('dlgFlights',JSON.stringify(a));}catch(e){} }
-function showLogUI(on){ const r=document.getElementById('reticle'),p=document.getElementById('placeHere'); if(r)r.style.display=on?'block':'none'; if(p)p.style.display=on?'block':'none'; }
+function showLogUI(on){ const r=document.getElementById('reticle'),p=document.getElementById('placeHere'),cc=document.getElementById('centerCross');
+  if(r)r.style.display=on?'block':'none'; if(p)p.style.display=on?'block':'none'; if(cc)cc.classList.toggle('hide',on); }
 function startLogFlight(){
   closeSide();
   if(userLoc) map.setView([userLoc.lat,userLoc.lon], Math.max(map.getZoom(),15));   // default to your GPS spot
@@ -1333,7 +1361,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.2', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.3', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
@@ -1969,6 +1997,11 @@ document.getElementById('lbSort').onchange=renderLeaderboard;
   t.onchange=()=>{ try{localStorage.setItem('dlgShowLbPins',t.checked?'1':'0');}catch(e){} renderLeaderboard(); };})();
 document.getElementById('btnLogFlight').onclick=startLogFlight;
 document.getElementById('placeHere').onclick=()=>{ const c=map.getCenter(); openFlightForm(c.lat,c.lng); };
+document.getElementById('flyBanner').onclick=()=>{
+  const lw=document.getElementById('liveWind');
+  if(!lw.checked){ lw.checked=true; lw.dispatchEvent(new Event('change')); }   // tap to turn on live conditions
+  else { document.getElementById('app').classList.add('side-open'); }          // already live -> open full verdict
+};
 document.getElementById('btnExportFlights').onclick=exportFlights;
 document.getElementById('btnImportFlights').onclick=()=>document.getElementById('fileFlights').click();
 document.getElementById('fileFlights').onchange=e=>{ if(e.target.files[0])importFlights(e.target.files[0]); e.target.value=''; };
