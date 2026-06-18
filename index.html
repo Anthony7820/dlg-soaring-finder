@@ -530,6 +530,9 @@
           <input type="range" id="hour" min="6" max="20" value="15"></label>
         <label class="row">Overlay opacity <span class="val" id="opLbl">70%</span>
           <input type="range" id="op" min="0" max="100" value="70"></label>
+        <label class="row" style="cursor:pointer" title="Use satellite imagery greenness so green/transpiring ground triggers weaker thermals than bare, sun-baked ground">
+          <span>Vegetation heating <span class="sub">beta</span></span>
+          <input type="checkbox" id="vegHeat" checked></label>
       </div>
 
       <div class="group">
@@ -1081,6 +1084,7 @@ function computeBase(){
   A={slopeDeg:slopeArr,aspect:aspArr,tpi:tpi,mask:mask};
   computeWind();      // solve terrain flow for the current wind before scoring
   rescore();
+  loadVegForG();      // async: refine thermal heating with ground cover, then re-score (cheap)
 }
 
 // Light step: re-score from cached derivatives when wind / sun / month change
@@ -1094,8 +1098,8 @@ function rescore(){
   for(let i=0;i<n;i++){
     if(mask&&!mask[i])continue;                              // leave 0 outside the drawn area
     if(Z[i]<WATER)continue;                                 // skip water — no thermals over the sea
-    const s=A.slopeDeg[i], a=A.aspect[i], tp=A.tpi[i];
-    let t=scoreDeriv(s,a,tp,sun,WIND,'thermal');
+    const s=A.slopeDeg[i], a=A.aspect[i], tp=A.tpi[i], vg=A.veg?A.veg[i]:0;
+    let t=scoreDeriv(s,a,tp,sun,WIND,'thermal',vg);
     let l=scoreDeriv(s,a,tp,sun,WIND,'slope');
     if(useWind){
       const r=(i/G.w)|0, c=i%G.w;
@@ -1464,7 +1468,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.8', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.9', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
@@ -1755,6 +1759,51 @@ function loadElevTile(z,x,y){
   });
 }
 
+// ---- Vegetation / ground-cover (modulates THERMAL heating: green = transpiring = weak trigger) ----
+// Sample satellite imagery and derive a Green-Leaf-Index. Provider is one-line swappable;
+// NASA GIBS NDVI is the documented alt if a provider isn't pixel-readable (CORS).
+const IMAGERY_SRC = t=>'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/'+t.z+'/'+t.y+'/'+t.x+'.png';
+let vegAvailable=true;             // flips false if imagery can't be pixel-read (CORS taint) — then we no-op
+const vegCache=new Map();
+function loadVegTile(z,x,y){
+  const key=z+'/'+x+'/'+y;
+  if(vegCache.has(key))return Promise.resolve(vegCache.get(key));
+  return new Promise(resolve=>{
+    if(!vegAvailable){ return resolve(null); }
+    const img=new Image(); img.crossOrigin='anonymous';
+    img.onload=()=>{
+      const cv=document.createElement('canvas'); cv.width=256; cv.height=256;
+      const ctx=cv.getContext('2d'); ctx.drawImage(img,0,0);
+      let d; try{ d=ctx.getImageData(0,0,256,256).data; }catch(e){ vegAvailable=false; return resolve(null); }
+      const v=new Float32Array(256*256);
+      for(let i=0;i<256*256;i++){
+        const R=d[i*4],Gc=d[i*4+1],B=d[i*4+2];
+        // Green Leaf Index: (2G−R−B)/(2G+R+B), >0 = green vegetation; scale to a 0..1 "greenness"
+        const gli=(2*Gc-R-B)/(2*Gc+R+B+1);
+        v[i]=Math.max(0,Math.min(1, gli*3));
+      }
+      vegCache.set(key,v); resolve(v);
+    };
+    img.onerror=()=>resolve(null);
+    img.src=IMAGERY_SRC({z:z,x:x,y:y});
+  });
+}
+let vegSeq=0;
+async function loadVegForG(){
+  if(!G||!G.tiles||!vegAvailable||!document.getElementById('vegHeat').checked) return;
+  const myveg=++vegSeq, {z,x0,y0,nx,ny}=G.tiles, W=G.w,H=G.h;
+  const veg=new Float32Array(W*H);
+  const jobs=[];
+  for(let ty=0;ty<ny;ty++)for(let tx=0;tx<nx;tx++){
+    jobs.push(loadVegTile(z,x0+tx,y0+ty).then(t=>{
+      if(!t)return; const ox=tx*256, oy=ty*256;
+      for(let r=0;r<256;r++){const dst=(oy+r)*W+ox, src=r*256; for(let c=0;c<256;c++)veg[dst+c]=t[src+c];}
+    }));
+  }
+  try{ await Promise.all(jobs);}catch(e){ return; }
+  if(myveg!==vegSeq || !A || !vegAvailable) return;   // superseded or no longer applicable
+  A.veg=veg; rescore();                                // refine scores with ground cover (cheap re-score)
+}
 let fetchSeq=0;
 let analyzedBounds=null, analyzedZoom=null;   // coverage cache so panning within it skips recompute
 async function fetchTerrain(){
@@ -1795,7 +1844,7 @@ async function fetchTerrain(){
       for(let c=0;c<W;c++){const lon=west+(east-west)*(c/(W-1));
         mask[r*W+c]=pointInPoly(lat,lon,evalPoly)?1:0;}}
   }
-  G={z:zArr,w:W,h:H,dx:mpp,dy:mpp,bounds,latC,mask,zRaw:zArr};
+  G={z:zArr,w:W,h:H,dx:mpp,dy:mpp,bounds,latC,mask,zRaw:zArr,tiles:{z:tz,x0,y0,nx,ny}};
   if(buildingsApplied){ buildingsApplied=false; const bb=document.getElementById('btnBuildings'); if(bb)bb.textContent='Add buildings (beta)'; }
   analyzedBounds=usePoly?null:bounds; analyzedZoom=map.getZoom();   // remember coverage
   hideStatus();analyze();
@@ -1852,11 +1901,13 @@ const SLOPE_MAX=64.0, TPI_SCALE=20.0;
 let TILE_URL='', tileLayer=null;
 const tileStore={}; // key z/x/y -> {coords,data(RGBA),tile(canvas)}
 
-function scoreDeriv(slopeDeg,aspectDeg,tpi,sun,windFrom,mode){
+const VEG_W=0.6;   // how much dense vegetation suppresses thermal heating (evapotranspiration/shade)
+function scoreDeriv(slopeDeg,aspectDeg,tpi,sun,windFrom,mode,veg){
   const sR=slopeDeg*Math.PI/180, aR=aspectDeg*Math.PI/180;
   const sunAltR=sun.alt*Math.PI/180, sunAzR=sun.az*Math.PI/180;
   let insol=0;
   if(sun.alt>0){insol=Math.max(0,Math.cos(sR)*Math.sin(sunAltR)+Math.sin(sR)*Math.cos(sunAltR)*Math.cos(sunAzR-aR));}
+  if(veg){ insol*=(1-VEG_W*Math.max(0,Math.min(1,veg))); }   // green ground sheds heat as latent, not sensible
   const tNorm=Math.tanh(tpi/TPI_SCALE);          // -1..1, + = ridge/spur
   const release=Math.max(0,tNorm);
   const gentle=Math.exp(-((slopeDeg-12)**2)/(2*144));
@@ -1887,10 +1938,17 @@ function explainCell(i){
   const dayF=sun.alt>3?1:(sun.alt>0?0.5:0.12);
   const align=Math.max(0,Math.cos(aR-WIND*Math.PI/180));
   const steep=Math.exp(-((s-AC.slopeSweet)**2)/(2*144));
-  const TERR='#7bc5ff', SUN='#ffd66b', MOD='#c08bff', HAZ='#ef5e6b';
-  // ---- THERMAL trigger (terrain + sun) ----
+  const TERR='#7bc5ff', SUN='#ffd66b', MOD='#c08bff', HAZ='#ef5e6b', VEGC='#2fd49a';
+  const veg=A.veg?A.veg[i]:null;
+  const insolEff = veg!=null ? insol*(1-VEG_W*Math.max(0,Math.min(1,veg))) : insol;
+  // ---- THERMAL trigger (terrain + sun + ground cover) ----
   let h='<div class="bd"><h4>🔥 Thermal trigger <small>'+(A.thermal[i]*100|0)+'/100</small></h4>';
-  h+=bdRow('Sun on face ×.6',insol,SUN)+bdRow('Convex release ×.3',release,TERR)+bdRow('Gentle ground ×.1',gentle,TERR);
+  h+=bdRow('Sun on face ×.6',insolEff,SUN)+bdRow('Convex release ×.3',release,TERR)+bdRow('Gentle ground ×.1',gentle,TERR);
+  if(veg!=null){
+    const cut=Math.round(VEG_W*Math.max(0,Math.min(1,veg))*100);
+    const label=veg<0.15?'bare / dry — strong trigger':veg<0.4?'sparse brush':veg<0.7?'vegetated':'green / dense — weak trigger';
+    h+=bdRow('Ground cover',veg,VEGC)+'<div class="bd-note"><b style="color:'+VEGC+'">'+label+'</b>'+(cut>0?' — cuts solar heating '+cut+'%':'')+'</div>';
+  }
   h+='<div class="bd-note">Daylight gate: <b>'+Math.round(dayF*100)+'%</b> (sun '+(sun.alt>0?'+'+sun.alt.toFixed(0)+'° up':'below horizon')+')</div>';
   // ---- SLOPE-SOARING face (terrain shape + wind model) ----
   h+='<h4>⛰ Slope-soaring face <small>'+(A.slope[i]*100|0)+'/100</small></h4>';
@@ -2153,6 +2211,11 @@ document.getElementById('acClass').addEventListener('change',e=>{
 });
 document.getElementById('acReset').addEventListener('click',()=>{ AC=Object.assign({class:AC.class}, AIRCRAFT[AC.class]); applyAircraft(); });
 acFillInputs();
+// vegetation-heating toggle
+document.getElementById('vegHeat').addEventListener('change',e=>{
+  if(e.target.checked){ loadVegForG(); }
+  else if(A){ delete A.veg; rescore(); }
+});
 month_.oninput=()=>{document.getElementById('moLbl').textContent=MONTHS[month_.value-1];onParamsChanged();};
 hour_.oninput=()=>{document.getElementById('hrLbl').textContent=(hour_.value<10?'0':'')+hour_.value+':00';onParamsChanged();};
 op_.oninput=()=>{document.getElementById('opLbl').textContent=op_.value+'%';if(overlay)overlay.setOpacity(+op_.value/100);if(tileLayer)tileLayer.setOpacity(+op_.value/100);};
