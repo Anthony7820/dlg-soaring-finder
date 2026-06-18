@@ -1269,8 +1269,8 @@ function saveFlight(lat,lon){
     maxTimeMin:g('ffTime').value!==''?+g('ffTime').value:null,
     notes:(g('ffNotes').value||'').slice(0,200)};
   const a=loadFlights(); a.push(f); saveFlights(a);
-  postCommunity(f);                 // share if community is connected (fire-and-forget)
   cancelLogFlight(); renderFlights(); renderLeaderboard();
+  if(communityEnabled()){ postCommunity(f).then(ok=>{ if(ok){ try{localStorage.removeItem('dlgCommCache');}catch(e){} fetchCommunity(true).then(renderLeaderboard); } }); }
 }
 function deleteFlight(id){ if(!confirm('Delete this logged flight?'))return; saveFlights(loadFlights().filter(f=>f.id!==id)); renderFlights(); }
 function flightHover(id,on){ const m=flightMarkerById[id]; const el=m&&m._icon&&m._icon.querySelector('.flight-marker'); if(el)el.classList.toggle('hl',on); }
@@ -1324,7 +1324,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.0', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.1', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
@@ -1382,14 +1382,25 @@ function renderAdminBar(){
     document.getElementById('modLink').onclick=e=>{e.preventDefault(); const em=prompt('Owner email for a sign-in link:', OWNER_EMAIL); if(em)sendMagicLink(em.trim());}; }
 }
 window.adminHide=adminHide; window.adminDelete=adminDelete; window.signOut=signOut;
-async function fetchCommunity(){
+const COMM_TTL=5*60*1000;   // 5-min browser cache -> keeps Supabase egress tiny
+async function fetchCommunity(force){
   if(!communityEnabled())return [];
+  // serve public visitors from a short cache; only refetch when stale, forced, or owner
+  if(!force && !isOwner()){
+    try{ const c=JSON.parse(localStorage.getItem('dlgCommCache')||'null');
+      if(c && (Date.now()-c.t)<COMM_TTL){ communityFlights=c.d.map(normFlight); return communityFlights; } }catch(e){}
+  }
   try{
-    const filt = isOwner()?'':'&hidden=eq.false';   // owner also sees hidden rows (to unhide)
-    const r=await fetch(SUPA_URL+'/rest/v1/flights?select=*'+filt+'&order=created_at.desc&limit=2000',
+    const cols='id,pilot,lat,lon,date,aircraft,max_alt_ft,max_time_min,hidden';   // omit notes -> smaller payload
+    const filt = isOwner()?'':'&hidden=eq.false';                                  // owner also sees hidden rows
+    const r=await fetch(SUPA_URL+'/rest/v1/flights?select='+cols+filt+'&order=created_at.desc&limit=500',
       {headers:{apikey:SUPA_KEY,Authorization:'Bearer '+(isOwner()&&authToken?authToken:SUPA_KEY)}});
-    if(!r.ok)return []; communityFlights=(await r.json()).map(normFlight); return communityFlights;
-  }catch(e){ return []; }
+    if(!r.ok)return communityFlights;
+    const data=await r.json();
+    communityFlights=data.map(normFlight);
+    if(!isOwner()){ try{localStorage.setItem('dlgCommCache',JSON.stringify({t:Date.now(),d:data}));}catch(e){} }
+    return communityFlights;
+  }catch(e){ return communityFlights; }
 }
 async function postCommunity(f){
   if(!communityEnabled())return false;
