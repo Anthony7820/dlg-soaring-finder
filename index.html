@@ -869,13 +869,15 @@ async function getWindForecast(lat,lon){
     +'&wind_speed_unit=ms&forecast_days=2&timezone=auto&hourly=';
   const windVars='wind_speed_10m,wind_direction_10m,wind_gusts_10m,wind_speed_925hPa,wind_direction_925hPa';
   const convVars=',cape,cloud_cover_low,temperature_2m,dew_point_2m';
+  const soarVars=',boundary_layer_height';            // thermal ceiling (mixing-layer depth)
   let H=null;
-  try{ const r=await fetch(base+windVars+convVars); if(r.ok) H=(await r.json()).hourly; }catch(e){}
-  if(!H){ const r=await fetch(base+windVars); if(!r.ok) throw new Error('wind HTTP '+(r&&r.status)); H=(await r.json()).hourly; }
+  try{ const r=await fetch(base+windVars+convVars+soarVars); if(r.ok) H=(await r.json()).hourly; }catch(e){}
+  if(!H){ try{ const r=await fetch(base+windVars+convVars); if(r.ok) H=(await r.json()).hourly; }catch(e){} } // drop soaring vars
+  if(!H){ const r=await fetch(base+windVars); if(!r.ok) throw new Error('wind HTTP '+(r&&r.status)); H=(await r.json()).hourly; } // wind only
   const rec={fetchedAt:Date.now(),lat:latR,lon:lonR,time:H.time,
     spd10:H.wind_speed_10m,dir10:H.wind_direction_10m,gust10:H.wind_gusts_10m,
     spd925:H.wind_speed_925hPa,dir925:H.wind_direction_925hPa,
-    cape:H.cape,ccLow:H.cloud_cover_low,t2m:H.temperature_2m,td2m:H.dew_point_2m};
+    cape:H.cape,ccLow:H.cloud_cover_low,t2m:H.temperature_2m,td2m:H.dew_point_2m,blh:H.boundary_layer_height};
   try{localStorage.setItem(key,JSON.stringify(rec));}catch(e){}
   windCache=rec; return rec;
 }
@@ -940,23 +942,51 @@ function updateConditions(){
   const T   = windCache.t2m  &&Number.isFinite(windCache.t2m[i])  ?windCache.t2m[i]  :null;
   const Td  = windCache.td2m &&Number.isFinite(windCache.td2m[i]) ?windCache.td2m[i] :null;
   const cape= windCache.cape &&Number.isFinite(windCache.cape[i]) ?windCache.cape[i] :null;
+  const blh = windCache.blh  &&Number.isFinite(windCache.blh[i])  ?windCache.blh[i]  :null;  // mixing-layer depth (m)
+  // winds aloft (~925 hPa ≈ 2,500 ft) for thermal drift + shear
+  const s10 = windCache.spd10&&Number.isFinite(windCache.spd10[i])?windCache.spd10[i]:null;
+  const d10 = windCache.dir10&&Number.isFinite(windCache.dir10[i])?windCache.dir10[i]:null;
+  const s925= windCache.spd925&&Number.isFinite(windCache.spd925[i])?windCache.spd925[i]:null;
+  const d925= windCache.dir925&&Number.isFinite(windCache.dir925[i])?windCache.dir925[i]:null;
   // sun at the forecast hour, over the map-view center
   const t=windCache.time[i]||'', mo=(+t.slice(5,7))||7, hr=(+t.slice(11,13))||12;
   const ref=wxRef(), sun=sunPosition(ref[0],ref[1],mo,hr);
-  let strength;
-  if(sun.alt<=2){ strength='Dead 😴 (no sun)'; }
+  let strength, why='';
+  if(sun.alt<=2){ strength='Dead 😴 (no sun)'; why='sun down'; }
   else {
     const heat=Math.max(0,Math.sin(sun.alt*Math.PI/180))*(1-((cc!=null?cc:30)/100));   // 0..1 surface heating
-    strength = heat<0.18?'Weak':heat<0.38?'Light':heat<0.6?'Moderate':heat<0.82?'Strong 🔥':'Booming 🚀';
+    // mixing-layer depth scales it: a shallow marine layer caps thermals; a deep BL = boomers
+    let idx=heat, blNote='';
+    if(blh!=null){ const blF=Math.max(0.30,Math.min(1.15, blh/1400)); idx=heat*blF;
+      blNote = blh<600?' (shallow layer caps it)':blh>1800?' (deep, well-mixed)':''; }
+    strength = (idx<0.16?'Weak':idx<0.34?'Light':idx<0.56?'Moderate':idx<0.78?'Strong 🔥':'Booming 🚀')+blNote;
+    why = 'sun '+Math.round(heat*100)+'% · '+(cc!=null?Math.round(cc)+'% cloud':'clear')+(blh!=null?' · BL '+Math.round(blh)+' m':'');
   }
   const cbaseM = (T!=null&&Td!=null)? Math.max(0,(T-Td)*125) : null;   // Espy dry-thermal cloudbase estimate
+  // thermal ceiling = the lower of mixing-layer top and (dry) cloudbase
+  let topFt=null, topSrc='';
+  if(blh!=null){ topFt=blh*3.281; topSrc='mixing layer'; }
+  if(cbaseM!=null && (topFt==null || cbaseM*3.281<topFt)){ topFt=cbaseM*3.281; topSrc='cloudbase'; }
+  // shear between surface and aloft
+  let shear='';
+  if(s10!=null && s925!=null && d10!=null && d925!=null){
+    const veer=Math.abs(((d925-d10+540)%360)-180);   // 0..180 directional change
+    const dSpd=s925-s10;
+    if(veer>45 || dSpd>6) shear='⚠ wind shear with height — thermals lean &amp; can break up';
+    else if(veer>25 || dSpd>3) shear='some shear aloft — thermals drift downwind';
+  }
   const loc = centerLabel();
   box.innerHTML='<div class="sim-hint" style="margin-bottom:6px">📍 For the map-view center · '+loc+'</div>'
     +'<div class="sim-line"><span>Thermal strength</span><b>'+strength+'</b></div>'
+    +(why?'<div class="sim-hint" style="margin:-2px 0 5px;opacity:.6">'+why+'</div>':'')
     +'<div class="sim-line"><span>Sun angle</span><b>'+Math.max(0,sun.alt).toFixed(0)+'°</b></div>'
-    +(cbaseM!=null?'<div class="sim-line"><span>Est. cloudbase</span><b>~'+(Math.round(cbaseM*3.281/100)*100)+' ft AGL</b></div>':'')
+    +(topFt!=null?'<div class="sim-line"><span>Thermal top</span><b>~'+(Math.round(topFt/100)*100).toLocaleString()+' ft ('+topSrc+')</b></div>':'')
+    +(cbaseM!=null?'<div class="sim-line"><span>Est. cloudbase</span><b>~'+(Math.round(cbaseM*3.281/100)*100).toLocaleString()+' ft AGL</b></div>':'')
+    +(s925!=null&&d925!=null?'<div class="sim-line"><span>Winds aloft (~2.5k ft)</span><b>'+compass(d925)+' @ '+Math.round(s925*1.944)+' kt</b></div>':'')
+    +(shear?'<div class="sim-hint" style="margin:3px 0;color:#f5b942">'+shear+'</div>':'')
     +(cc!=null?'<div class="sim-line"><span>Low cloud</span><b>'+Math.round(cc)+'%</b></div>':'')
-    +(cape!=null?'<div class="sim-line" style="opacity:.65"><span>Instability (CAPE)</span><b>'+Math.round(cape)+' J/kg</b></div>':'');
+    +(cape!=null?'<div class="sim-line" style="opacity:.6"><span>Instability (CAPE)</span><b>'+Math.round(cape)+' J/kg</b></div>':'')
+    +'<div class="bd-src" style="margin-top:7px">Thermal model: surface heating (sun × clear-sky) scaled by mixing-layer depth. Winds aloft from 925 hPa. Forecast = Open-Meteo; verify at the field.</div>';
 }
 // "Is it flyable right now?" — synthesize wind + gusts + daylight into a verdict + 12 h timeline
 function flyHour(i){
@@ -1434,7 +1464,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.7', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.8', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
