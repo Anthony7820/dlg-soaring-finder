@@ -857,9 +857,13 @@ function thermalTriggerField(sun){
   const samp=[]; const step=Math.max(1,Math.floor(n/15000));
   for(let i=0;i<n;i+=step){ if(mask&&!mask[i])continue; if(Z[i]<1)continue; if(raw[i]>0)samp.push(raw[i]); }
   samp.sort((a,b)=>a-b);
-  const p = samp.length? samp[Math.min(samp.length-1,Math.floor(0.96*samp.length))] : 1;
-  const inv = p>1e-4?1/p:1;
-  for(let i=0;i<n;i++){ if(mask&&!mask[i])continue; if(Z[i]<1)continue; out[i]=Math.min(1, Math.pow(raw[i]*inv, 1.4)); }
+  const p = samp.length? samp[Math.min(samp.length-1,Math.floor(0.96*samp.length))] : 0;
+  const inv = p>1e-4?1/p:0;
+  // ABSOLUTE floor (per met review): per-scene normalization alone would stretch a dead-flat,
+  // trigger-less scene into fake "hotspots". Fade overall brightness by how strong the scene's
+  // real (un-normalized) triggers actually are, so flat/uniform terrain stays honestly dim.
+  const absScale = Math.max(0.10, Math.min(1, (p-0.06)/0.16));   // flat(p≈.08)→~0.1, real terrain→1
+  for(let i=0;i<n;i++){ if(mask&&!mask[i])continue; if(Z[i]<1)continue; out[i]=Math.min(1, Math.pow(raw[i]*inv, 1.4)*absScale); }
   return out;
 }
 
