@@ -844,7 +844,7 @@ function boxMeanField(src,w,h,R){
 // × dryness, then percentile-normalized per scene. Sun-driven, so the hotspots MIGRATE through the day.
 function thermalTriggerField(sun){
   const w=G.w,h=G.h,n=w*h,mpp=Math.max(1,G.dx);
-  const sR=A.slopeDeg,asp=A.aspect,tp=A.tpi,tp2=A.tpi2||A.tpi,Z=G.z,mask=A.mask;
+  const sR=A.slopeDeg,asp=A.aspect,tp=A.tpi,tp2=A.tpi2||A.tpi,tp3=A.tpi3||A.tpi2||A.tpi,Z=G.z,mask=A.mask;
   const out=new Float32Array(n);
   if(sun.alt<=0){ A.insol=out; A.insolMean=out; return out; }
   const sunAltR=sun.alt*Math.PI/180,sunAzR=sun.az*Math.PI/180,sinA=Math.sin(sunAltR),cosA=Math.cos(sunAltR);
@@ -867,21 +867,21 @@ function thermalTriggerField(sun){
     const contrast=anom>0?Math.min(1,anom*4.5):0;                // hotter than its surroundings
     const warmth=Math.min(1, insol[i]/0.55);                     // must be genuinely sunlit
     const dry = A.veg? Math.max(0.25,1-0.85*A.veg[i]) : 1;       // bare/dry releases hotter
-    // multiplicative: a real trigger needs heat-contrast AND a release point — low floors keep
-    // ordinary sunny ground dim so genuine hotspots stand out instead of a uniform wash
-    raw[i]= release * (0.18+0.82*contrast) * warmth * dry;
+    const flatness=Math.max(0, 1 - sR[i]/16);                    // big open FLAT ground is a real source
+    // EXPOSURE: a field hemmed in by higher terrain (a hollow, broad TPI<0) is sheltered — cold air
+    // pools, it's partly shaded, thermals don't release. Open/flat or slightly raised ground (TPI≥0)
+    // is fully exposed. So an open field only counts when it isn't sitting in a bowl.
+    const exposure = tp3[i]>=0 ? 1 : Math.max(0.2, 1 + tp3[i]/(TPI_SCALE*2));   // broad shelter: hemmed-in = fewer thermals
+    const openField = flatness * exposure;
+    // two thermal modes: (a) open, exposed, sunlit dry ground (fields/lakebeds → broad moderate lift)
+    // and (b) sharp release/contrast hotspots (convex breaks, sun-facing-amid-shade → bright triggers)
+    const t = 0.13 + 0.25*openField + 0.40*release + 0.85*release*contrast + 0.35*contrast;
+    raw[i]= warmth * dry * t;
   }
-  // robust per-scene normalization + gamma so triggers pop and background stays dim
-  const samp=[]; const step=Math.max(1,Math.floor(n/15000));
-  for(let i=0;i<n;i+=step){ if(mask&&!mask[i])continue; if(Z[i]<1)continue; if(raw[i]>0)samp.push(raw[i]); }
-  samp.sort((a,b)=>a-b);
-  const p = samp.length? samp[Math.min(samp.length-1,Math.floor(0.96*samp.length))] : 0;
-  const inv = p>1e-4?1/p:0;
-  // ABSOLUTE floor (per met review): per-scene normalization alone would stretch a dead-flat,
-  // trigger-less scene into fake "hotspots". Fade overall brightness by how strong the scene's
-  // real (un-normalized) triggers actually are, so flat/uniform terrain stays honestly dim.
-  const absScale = Math.max(0.10, Math.min(1, (p-0.06)/0.16));   // flat(p≈.08)→~0.1, real terrain→1
-  for(let i=0;i<n;i++){ if(mask&&!mask[i])continue; if(Z[i]<1)continue; out[i]=Math.min(1, Math.pow(raw[i]*inv, 1.4)*absScale); }
+  // ABSOLUTE reference (not per-scene) so a flat dry field reads honestly MODERATE (it DOES make thermals),
+  // real release/contrast hotspots read BRIGHT, and a trigger-less scene can't be stretched into fake peaks.
+  const ABS=1.0, gamma=1.35;
+  for(let i=0;i<n;i++){ if(mask&&!mask[i])continue; if(Z[i]<1)continue; out[i]=Math.min(1, Math.pow(Math.max(0,raw[i])/ABS, gamma)); }
   return out;
 }
 
@@ -1227,8 +1227,10 @@ function computeBase(){
   const {z,w,h,dx,dy}=G;
   const Rcells=Math.max(2,Math.round(80/Math.max(dx,dy)));   // ~80 m TPI radius
   const Rcells2=Math.max(3,Math.round(300/Math.max(dx,dy))); // ~300 m TPI radius (multi-scale release)
+  const Rcells3=Math.max(5,Math.round(900/Math.max(dx,dy))); // ~900 m TPI radius (shelter/exposure)
   const tpi=buildTPI(z,w,h,Rcells);                          // meters
   const tpi2=buildTPI(z,w,h,Rcells2);                        // meters (coarse)
+  const tpi3=buildTPI(z,w,h,Rcells3);                        // meters (broad — is this spot hemmed in?)
   const mask=G.mask;                                          // 1 inside AOI, 0 outside (or null)
   const slopeArr=new Float32Array(w*h), aspArr=new Float32Array(w*h);
   for(let r=0;r<h;r++)for(let c=0;c<w;c++){
@@ -1237,7 +1239,7 @@ function computeBase(){
     const sa=slopeAspect(z,r,c,w,h,dx,dy);
     slopeArr[k]=sa.slopeDeg; aspArr[k]=sa.aspectDeg;
   }
-  A={slopeDeg:slopeArr,aspect:aspArr,tpi:tpi,tpi2:tpi2,mask:mask};
+  A={slopeDeg:slopeArr,aspect:aspArr,tpi:tpi,tpi2:tpi2,tpi3:tpi3,mask:mask};
   computeWind();      // solve terrain flow for the current wind before scoring
   rescore();
   loadVegForG();      // async: refine thermal heating with ground cover, then re-score (cheap)
@@ -1655,7 +1657,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.15-dev', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v2.0', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
