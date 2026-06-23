@@ -1657,7 +1657,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v2.0', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v2.0', APP_COMMIT='d3df6a8';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
