@@ -786,7 +786,8 @@ function sunAtForecast(i){
   const t=windCache.time[i];
   const Y=+t.slice(0,4),Mo=+t.slice(5,7),D=+t.slice(8,10),H=+t.slice(11,13),Mi=+t.slice(14,16)||0;
   const ref=wxRef(), lon=ref[1];
-  const offH=(windCache.utcOffset||0)/3600;                 // hours east of UTC for the forecast site
+  // hours east of UTC; if the offset is missing fall back to the longitude estimate (never assume UTC)
+  const offH=(windCache.utcOffset!=null? windCache.utcOffset/3600 : Math.round(lon/15));
   const utcH=(H+Mi/60)-offH;                                 // clock time -> UTC decimal hour
   const doy=Math.floor((Date.UTC(Y,Mo-1,D)-Date.UTC(Y,0,0))/86400000);
   const b=2*Math.PI*(doy-81)/364;
@@ -955,7 +956,8 @@ let windCache=null;       // {time[],spd10[],dir10[],spd925[],dir925[]}
 async function getWindForecast(lat,lon){
   const latR=Math.round(lat*20)/20, lonR=Math.round(lon*20)/20, key='dlgwind:'+latR+','+lonR;
   try{const c=JSON.parse(localStorage.getItem(key)||'null');
-    if(c&&Date.now()-c.fetchedAt<6*3600*1000){windCache=c;return c;}}catch(e){}
+    // require utcOffset (older cached entries lack it → sun/time would be mis-computed) and freshness
+    if(c&&c.utcOffset!=null&&Date.now()-c.fetchedAt<6*3600*1000){windCache=c;return c;}}catch(e){}
   const base='https://api.open-meteo.com/v1/forecast?latitude='+latR+'&longitude='+lonR
     +'&wind_speed_unit=ms&forecast_days=2&timezone=auto&hourly=';
   const windVars='wind_speed_10m,wind_direction_10m,wind_gusts_10m,wind_speed_925hPa,wind_direction_925hPa';
@@ -974,7 +976,10 @@ async function getWindForecast(lat,lon){
   windCache=rec; return rec;
 }
 function nearestHourIndex(times){
-  if(!times)return 0; const now=Date.now(); const off=((windCache&&windCache.utcOffset)||0)*1000; let best=0,bd=1e18;
+  if(!times)return 0; const now=Date.now();
+  const offS = (windCache&&windCache.utcOffset!=null)? windCache.utcOffset
+             : (windCache&&windCache.lon!=null? Math.round(windCache.lon/15)*3600 : 0);
+  const off=offS*1000; let best=0,bd=1e18;
   for(let i=0;i<times.length;i++){const t=times[i];
     // forecast strings are the SITE's local wall-clock; build the true UTC instant via utc_offset
     const utcMs=Date.UTC(+t.slice(0,4),+t.slice(5,7)-1,+t.slice(8,10),+t.slice(11,13),+t.slice(14,16)||0)-off;
@@ -1650,7 +1655,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.14-dev', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.15-dev', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
