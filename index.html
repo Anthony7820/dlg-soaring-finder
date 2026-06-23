@@ -476,8 +476,8 @@
           <button data-mode="rotor" title="Lee-side rotor / turbulence hazard">Rotor</button>
         </div>
         <div class="legend" style="margin-top:7px;line-height:1.5">
-          <span style="color:#e8a24a">▮</span> warm = <b>thermal</b> lift (needs sun + light wind) &nbsp;·&nbsp;
-          <span style="color:#3fbede">▮</span> cool = <b>slope/ridge</b> lift (needs wind on a face)
+          <span style="color:#e0507a">▮</span> magenta = <b>thermal</b> lift (needs sun + light wind) &nbsp;·&nbsp;
+          <span style="color:#34c4e0">▮</span> cyan = <b>slope/ridge</b> lift (needs wind on a face)
         </div>
       </div>
 
@@ -807,6 +807,60 @@ function buildTPI(z,w,h,R){
     tpi[r*w+c]=z[r*w+c]-mean(r-R,c-R,r+R,c+R);
   }
   return tpi;
+}
+// integral-image box mean of an arbitrary field (radius R in cells), edge-aware
+function boxMeanField(src,w,h,R){
+  const I=new Float64Array((w+1)*(h+1));
+  for(let r=0;r<h;r++){let row=0;for(let c=0;c<w;c++){row+=src[r*w+c];I[(r+1)*(w+1)+(c+1)]=I[r*(w+1)+(c+1)]+row;}}
+  const out=new Float32Array(w*h);
+  for(let r=0;r<h;r++){const r0=Math.max(0,r-R),r1=Math.min(h-1,r+R);
+    for(let c=0;c<w;c++){const c0=Math.max(0,c-R),c1=Math.min(w-1,c+R);
+      const A=I[r0*(w+1)+c0],B=I[r0*(w+1)+(c1+1)],C=I[(r1+1)*(w+1)+c0],D=I[(r1+1)*(w+1)+(c1+1)];
+      out[r*w+c]=(D-B-C+A)/((r1-r0+1)*(c1-c0+1));}}
+  return out;
+}
+// ============================ THERMAL TRIGGER FIELD ============================
+// Per the meteorology/fluids/geomorphometry panel: thermals don't fire on absolute warmth (that's a
+// uniform wash) — they fire where heating CONTRASTS with the surroundings AND terrain RELEASES the
+// bubble (convex break / slope-top / spur). So: heating-anomaly × multi-scale convex release × warmth
+// × dryness, then percentile-normalized per scene. Sun-driven, so the hotspots MIGRATE through the day.
+function thermalTriggerField(sun){
+  const w=G.w,h=G.h,n=w*h,mpp=Math.max(1,G.dx);
+  const sR=A.slopeDeg,asp=A.aspect,tp=A.tpi,tp2=A.tpi2||A.tpi,Z=G.z,mask=A.mask;
+  const out=new Float32Array(n);
+  if(sun.alt<=0){ A.insol=out; A.insolMean=out; return out; }
+  const sunAltR=sun.alt*Math.PI/180,sunAzR=sun.az*Math.PI/180,sinA=Math.sin(sunAltR),cosA=Math.cos(sunAltR);
+  const insol=new Float32Array(n);
+  for(let i=0;i<n;i++){
+    const s=sR[i]*Math.PI/180,a=asp[i]*Math.PI/180;
+    const v=Math.cos(s)*sinA+Math.sin(s)*cosA*Math.cos(sunAzR-a);
+    insol[i]=v>0?v:0;
+  }
+  const Rm=Math.max(2,Math.round(300/mpp));
+  const mean=boxMeanField(insol,w,h,Rm);     // ~300 m local-average heating
+  A.insol=insol; A.insolMean=mean;
+  const raw=new Float32Array(n);
+  for(let i=0;i<n;i++){
+    if(mask&&!mask[i])continue; if(Z[i]<1)continue;
+    const rel1=Math.max(0,Math.tanh(tp[i]/TPI_SCALE));           // ~80 m convexity
+    const rel2=Math.max(0,Math.tanh(tp2[i]/(TPI_SCALE*2.2)));    // ~300 m convexity
+    const release=Math.min(1, 0.28 + 0.72*(0.6*rel1+0.4*rel2));  // release-point weighting
+    const anom=insol[i]-mean[i];
+    const contrast=anom>0?Math.min(1,anom*4.5):0;                // hotter than its surroundings
+    const warmth=Math.min(1, insol[i]/0.55);                     // must be genuinely sunlit
+    const dry = A.veg? Math.max(0.25,1-0.85*A.veg[i]) : 1;       // bare/dry releases hotter
+    // multiplicative: a real trigger needs heat-contrast AND a release point — low floors keep
+    // ordinary sunny ground dim so genuine hotspots stand out instead of a uniform wash
+    raw[i]= release * (0.18+0.82*contrast) * warmth * dry;
+  }
+  // robust per-scene normalization + gamma so triggers pop and background stays dim
+  const samp=[]; const step=Math.max(1,Math.floor(n/15000));
+  for(let i=0;i<n;i+=step){ if(mask&&!mask[i])continue; if(Z[i]<1)continue; if(raw[i]>0)samp.push(raw[i]); }
+  samp.sort((a,b)=>a-b);
+  const p = samp.length? samp[Math.min(samp.length-1,Math.floor(0.96*samp.length))] : 1;
+  const inv = p>1e-4?1/p:1;
+  for(let i=0;i<n;i++){ if(mask&&!mask[i])continue; if(Z[i]<1)continue; out[i]=Math.min(1, Math.pow(raw[i]*inv, 1.4)); }
+  return out;
 }
 
 // ============================ WIND MODEL ============================
@@ -1145,7 +1199,9 @@ function computeBase(){
   if(!G) return;
   const {z,w,h,dx,dy}=G;
   const Rcells=Math.max(2,Math.round(80/Math.max(dx,dy)));   // ~80 m TPI radius
+  const Rcells2=Math.max(3,Math.round(300/Math.max(dx,dy))); // ~300 m TPI radius (multi-scale release)
   const tpi=buildTPI(z,w,h,Rcells);                          // meters
+  const tpi2=buildTPI(z,w,h,Rcells2);                        // meters (coarse)
   const mask=G.mask;                                          // 1 inside AOI, 0 outside (or null)
   const slopeArr=new Float32Array(w*h), aspArr=new Float32Array(w*h);
   for(let r=0;r<h;r++)for(let c=0;c<w;c++){
@@ -1154,7 +1210,7 @@ function computeBase(){
     const sa=slopeAspect(z,r,c,w,h,dx,dy);
     slopeArr[k]=sa.slopeDeg; aspArr[k]=sa.aspectDeg;
   }
-  A={slopeDeg:slopeArr,aspect:aspArr,tpi:tpi,mask:mask};
+  A={slopeDeg:slopeArr,aspect:aspArr,tpi:tpi,tpi2:tpi2,mask:mask};
   computeWind();      // solve terrain flow for the current wind before scoring
   rescore();
   loadVegForG();      // async: refine thermal heating with ground cover, then re-score (cheap)
@@ -1177,11 +1233,12 @@ function rescore(){
     tdGate=0.12+0.88*tdIdx;     // keep a faint trace of WHERE triggers are, but clearly dim on dead days
   }
   A.dayIdx=tdIdx;
+  const thField=thermalTriggerField(sun);    // heating-contrast × release × warmth × dryness (per scene)
   for(let i=0;i<n;i++){
     if(mask&&!mask[i])continue;                              // leave 0 outside the drawn area
     if(Z[i]<WATER)continue;                                 // skip water — no thermals over the sea
     const s=A.slopeDeg[i], a=A.aspect[i], tp=A.tpi[i], vg=A.veg?A.veg[i]:0;
-    let t=scoreDeriv(s,a,tp,sun,WIND,'thermal',vg);
+    let t=thField[i];                                        // localized thermal-trigger likelihood
     let l=scoreDeriv(s,a,tp,sun,WIND,'slope');
     if(useWind){
       const r=(i/G.w)|0, c=i%G.w;
@@ -1226,11 +1283,11 @@ function lerpStops(stops,v){
 function scoreColor(v){ // brighter, legible ramp: blue -> cyan -> green -> yellow -> orange
   return lerpStops([[58,92,150],[40,182,196],[120,216,92],[251,216,70],[247,110,48]],v);
 }
-function thermalColor(v){ // WARM = thermal lift (sun-driven, buoyant): slate -> ember -> orange -> gold
-  return lerpStops([[70,66,78],[150,92,58],[224,128,40],[247,176,46],[255,232,120]],v);
+function thermalColor(v){ // THERMAL lift — "heat" ramp that pops on brown/green terrain: violet -> magenta -> red -> gold
+  return lerpStops([[120,60,150],[200,52,128],[238,70,72],[250,160,46],[255,238,140]],v);
 }
-function slopeColor(v){ // COOL = slope/ridge lift (wind-driven, mechanical): slate -> teal -> cyan -> sky
-  return lerpStops([[64,76,96],[38,150,168],[44,186,210],[110,216,232],[176,236,246]],v);
+function slopeColor(v){ // SLOPE/RIDGE lift — cool ramp (high contrast vs warm terrain): slate -> teal -> cyan -> sky
+  return lerpStops([[60,78,104],[26,158,180],[40,196,224],[120,224,240],[188,242,250]],v);
 }
 function hazardColor(v){ // danger ramp: slate->amber->red (for rotor/turbulence)
   return lerpStops([[44,58,73],[242,177,52],[239,94,107],[200,30,50]],v);
@@ -1566,7 +1623,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.12-dev', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.13-dev', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
@@ -2045,17 +2102,24 @@ function explainCell(i){
   const steep=Math.exp(-((s-AC.slopeSweet)**2)/(2*144));
   const TERR='#7bc5ff', SUN='#ffd66b', MOD='#c08bff', HAZ='#ef5e6b', VEGC='#2fd49a';
   const veg=A.veg?A.veg[i]:null;
-  let heat=insol; if(veg!=null) heat *= (1-VEG_W*Math.max(0,Math.min(1,veg)));   // surface heating (veg-suppressed)
-  const trig=0.6+0.4*release;
-  // ---- THERMAL trigger: heating × convex trigger × daylight (no steepness, no wind) ----
+  // mirror thermalTriggerField: heating CONTRAST × multi-scale release × warmth × dryness
+  const insolC = A.insol? A.insol[i] : insol;
+  const meanC  = A.insolMean? A.insolMean[i] : insolC;
+  const anom   = insolC - meanC;
+  const contrast = anom>0?Math.min(1,anom*4.5):0;
+  const rel1=Math.max(0,Math.tanh(tp/TPI_SCALE));
+  const rel2=Math.max(0,Math.tanh((A.tpi2?A.tpi2[i]:tp)/(TPI_SCALE*2.2)));
+  const release2=Math.min(1,0.28+0.72*(0.6*rel1+0.4*rel2));
+  const warmth=Math.min(1,insolC/0.55);
+  // ---- THERMAL trigger: where it's HOTTER than its surroundings AND terrain releases the bubble ----
   let h='<div class="bd"><h4>🔥 Thermal trigger <small>'+(A.thermal[i]*100|0)+'/100</small></h4>';
-  h+=bdRow('Solar heating',heat,SUN)+bdRow('Convex trigger ×'+trig.toFixed(2),release,TERR);
+  h+=bdRow('Heating contrast',contrast,SUN)+bdRow('Release geometry',release2,TERR)+bdRow('Sun warmth',warmth,SUN);
   if(veg!=null){
     const cut=Math.round(VEG_W*Math.max(0,Math.min(1,veg))*100);
     const label=veg<0.15?'bare / dry — strong trigger':veg<0.4?'sparse brush':veg<0.7?'vegetated':'green / dense — weak trigger';
-    h+=bdRow('Ground cover',veg,VEGC)+'<div class="bd-note"><b style="color:'+VEGC+'">'+label+'</b>'+(cut>0?' — cuts solar heating '+cut+'%':'')+'</div>';
+    h+=bdRow('Ground cover',veg,VEGC)+'<div class="bd-note"><b style="color:'+VEGC+'">'+label+'</b>'+(cut>0?' — cuts heating '+cut+'%':'')+'</div>';
   }
-  h+='<div class="bd-note">Daylight gate: <b>'+Math.round(dayF*100)+'%</b> (sun '+(sun.alt>0?'+'+sun.alt.toFixed(0)+'° up':'below horizon')+') · <i>steepness &amp; wind do not affect thermals</i></div>';
+  h+='<div class="bd-note"><i>Triggers localize to hot spots &amp; convex release points — not flat uniform sun. The whole layer is then scaled by today’s thermal strength. Steepness &amp; wind don’t affect thermals.</i></div>';
   // ---- SLOPE-SOARING face (wind × geometry; sun plays no part) ----
   h+='<h4>⛰ Slope-soaring face <small>'+(A.slope[i]*100|0)+'/100</small></h4>';
   h+=bdRow('Faces the wind',align,TERR)+bdRow('Steepness fit ('+AC.slopeSweet+'°)',steep,TERR)+bdRow('Convex release',release,TERR);
