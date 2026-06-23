@@ -466,6 +466,10 @@
           <button data-mode="lift" title="Modeled orographic lift + speed-up">Lift</button>
           <button data-mode="rotor" title="Lee-side rotor / turbulence hazard">Rotor</button>
         </div>
+        <div class="legend" style="margin-top:7px;line-height:1.5">
+          <span style="color:#e8a24a">▮</span> warm = <b>thermal</b> lift (needs sun + light wind) &nbsp;·&nbsp;
+          <span style="color:#3fbede">▮</span> cool = <b>slope/ridge</b> lift (needs wind on a face)
+        </div>
       </div>
 
       <div class="group">
@@ -1143,6 +1147,12 @@ function lerpStops(stops,v){
 function scoreColor(v){ // brighter, legible ramp: blue -> cyan -> green -> yellow -> orange
   return lerpStops([[58,92,150],[40,182,196],[120,216,92],[251,216,70],[247,110,48]],v);
 }
+function thermalColor(v){ // WARM = thermal lift (sun-driven, buoyant): slate -> ember -> orange -> gold
+  return lerpStops([[70,66,78],[150,92,58],[224,128,40],[247,176,46],[255,232,120]],v);
+}
+function slopeColor(v){ // COOL = slope/ridge lift (wind-driven, mechanical): slate -> teal -> cyan -> sky
+  return lerpStops([[64,76,96],[38,150,168],[44,186,210],[110,216,232],[176,236,246]],v);
+}
 function hazardColor(v){ // danger ramp: slate->amber->red (for rotor/turbulence)
   return lerpStops([[44,58,73],[242,177,52],[239,94,107],[200,30,50]],v);
 }
@@ -1152,11 +1162,19 @@ function renderOverlay(){
   if(!G||!A)return;
   const {w,h,bounds}=G;
   const arr=curArr(); if(!arr)return;
-  const ramp=(MODE==='rotor')?hazardColor:scoreColor;
+  // colour by MECHANISM so the eye reads lift type, not just intensity:
+  //   warm = thermal (buoyant), cool = slope/ridge (mechanical), red = rotor hazard
+  const th=A.thermal, sl=A.slope;
   const cv=document.createElement('canvas');cv.width=w;cv.height=h;
   const ctx=cv.getContext('2d');const img=ctx.createImageData(w,h);
   for(let i=0;i<arr.length;i++){
-    const v=arr[i];const[cr,cg,cb]=ramp(v);
+    const v=arr[i];
+    let cr,cg,cb;
+    if(MODE==='rotor'){ [cr,cg,cb]=hazardColor(v); }
+    else if(MODE==='thermal'){ [cr,cg,cb]=thermalColor(v); }
+    else if(MODE==='slope'){ [cr,cg,cb]=slopeColor(v); }
+    else if(MODE==='combined'){ [cr,cg,cb]=( (th[i]*0.95>=sl[i]) ? thermalColor : slopeColor )(v); } // dominant mechanism
+    else { [cr,cg,cb]=scoreColor(v); }   // lift
     img.data[i*4]=cr;img.data[i*4+1]=cg;img.data[i*4+2]=cb;
     // low ground stays clear (map shows through); mid/high ramps up fast so shading reads
     img.data[i*4+3]= v<0.1 ? 0 : Math.round(Math.min(1,Math.pow(v,0.5))*255);
@@ -1220,10 +1238,11 @@ function drawSpots(top){
     const n=i+1;
     const marker=L.marker([s.lat,s.lon],{icon:L.divIcon({className:'',html:'<div class="num-marker">'+n+'</div>',iconSize:[24,24],iconAnchor:[12,12]})})
       .addTo(spotMarkers)
-      .bindPopup('<b>#'+n+' — '+(s.isSlope?'Slope soaring':'Thermal source')+'</b><br>'
+      .bindPopup('<b>#'+n+' — '+(s.isSlope?'⛰ Slope / ridge':'☀ Thermal trigger')+'</b><br>'
         +'Score '+(s.v*100|0)+'/100<br>'
         +'Slope '+s.slopeDeg.toFixed(0)+'°, faces '+compass(s.aspect)+' ('+s.aspect.toFixed(0)+'°)<br>'
-        +(s.isSlope?('Best wind <b>from '+compass(s.aspect)+'</b><br>'):'Sun-heated trigger point<br>')
+        +(s.isSlope?('<b>Needs wind from '+compass(s.aspect)+'</b> — works any time of day<br>')
+                   :('<b>Needs sun + light wind</b> — buoyant, drifts downwind<br>'))
         +'Airspace: <b>'+s.air.level+'</b> — '+s.air.reason+'<br>'
         +s.lat.toFixed(5)+', '+s.lon.toFixed(5)
         +(s.k!=null?'<details class="bd-wrap"><summary>🔍 Why this score</summary>'+explainCell(s.k)+'</details>':''),{maxWidth:300});
@@ -1468,7 +1487,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.10-dev', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.11-dev', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
@@ -1912,15 +1931,16 @@ function scoreDeriv(slopeDeg,aspectDeg,tpi,sun,windFrom,mode,veg){
   let insol=0;
   if(sun.alt>0){insol=Math.max(0,Math.cos(sR)*Math.sin(sunAltR)+Math.sin(sR)*Math.cos(sunAltR)*Math.cos(sunAzR-aR));}
   if(veg){ insol*=(1-VEG_W*Math.max(0,Math.min(1,veg))); }   // green ground sheds heat as latent, not sensible
-  const tNorm=Math.tanh(tpi/TPI_SCALE);          // -1..1, + = ridge/spur
+  const tNorm=Math.tanh(tpi/TPI_SCALE);          // -1..1, + = ridge/spur/convex
   const release=Math.max(0,tNorm);
-  const gentle=Math.exp(-((slopeDeg-12)**2)/(2*144));
   // thermals need sun: gate hard when it's below the horizon (dawn/dusk/night)
   const dayF = sun.alt>3 ? 1 : (sun.alt>0 ? 0.5 : 0.12);
-  // a thermal TRIGGER needs terrain structure (a convex release or a slope), not just flat sun —
-  // otherwise flat valley floors & farm fields blanket the map. Gate the solar term on relief.
-  const struct = Math.max(release, Math.min(1, slopeDeg/14));   // 0 = flat, 1 = real feature
-  const thermal=(0.6*insol*(0.45+0.55*struct) + 0.3*release + 0.1*gentle)*dayF;
+  // THERMAL = buoyant convection: surface HEATING (insol, already vegetation-suppressed) shed by a
+  // convex TRIGGER where bubbles detach. Independent of steepness & wind direction by design — those
+  // are SLOPE cues, not thermal ones. Flat, sun-baked, dry ground is a legitimate strong trigger.
+  const thermal = insol * (0.6 + 0.4*release) * dayF;
+  // SLOPE = mechanical: wind onto a face of the right steepness; convexity helps via crest speed-up.
+  // Sun plays no part. The shared 'release' here is coupled to wind alignment, not heating.
   let align=Math.max(0,Math.cos(aR-windFrom*Math.PI/180));
   const steep=Math.exp(-((slopeDeg-(typeof AC!=='undefined'?AC.slopeSweet:28))**2)/(2*144));
   let slope=align*(0.55*steep+0.45*release);
@@ -1941,25 +1961,23 @@ function explainCell(i){
   const sR=s*Math.PI/180,aR=a*Math.PI/180,sunAltR=sun.alt*Math.PI/180,sunAzR=sun.az*Math.PI/180;
   let insol=0; if(sun.alt>0) insol=Math.max(0,Math.cos(sR)*Math.sin(sunAltR)+Math.sin(sR)*Math.cos(sunAltR)*Math.cos(sunAzR-aR));
   const release=Math.max(0,Math.tanh(tp/TPI_SCALE));
-  const gentle=Math.exp(-((s-12)**2)/(2*144));
   const dayF=sun.alt>3?1:(sun.alt>0?0.5:0.12);
   const align=Math.max(0,Math.cos(aR-WIND*Math.PI/180));
   const steep=Math.exp(-((s-AC.slopeSweet)**2)/(2*144));
   const TERR='#7bc5ff', SUN='#ffd66b', MOD='#c08bff', HAZ='#ef5e6b', VEGC='#2fd49a';
   const veg=A.veg?A.veg[i]:null;
-  const struct=Math.max(release, Math.min(1, s/14));         // terrain-relief gate (matches scoreDeriv)
-  let insolEff = insol*(0.45+0.55*struct);
-  if(veg!=null) insolEff *= (1-VEG_W*Math.max(0,Math.min(1,veg)));
-  // ---- THERMAL trigger (terrain + sun + ground cover) ----
+  let heat=insol; if(veg!=null) heat *= (1-VEG_W*Math.max(0,Math.min(1,veg)));   // surface heating (veg-suppressed)
+  const trig=0.6+0.4*release;
+  // ---- THERMAL trigger: heating × convex trigger × daylight (no steepness, no wind) ----
   let h='<div class="bd"><h4>🔥 Thermal trigger <small>'+(A.thermal[i]*100|0)+'/100</small></h4>';
-  h+=bdRow('Sun on face ×.6',insolEff,SUN)+bdRow('Convex release ×.3',release,TERR)+bdRow('Gentle ground ×.1',gentle,TERR);
+  h+=bdRow('Solar heating',heat,SUN)+bdRow('Convex trigger ×'+trig.toFixed(2),release,TERR);
   if(veg!=null){
     const cut=Math.round(VEG_W*Math.max(0,Math.min(1,veg))*100);
     const label=veg<0.15?'bare / dry — strong trigger':veg<0.4?'sparse brush':veg<0.7?'vegetated':'green / dense — weak trigger';
     h+=bdRow('Ground cover',veg,VEGC)+'<div class="bd-note"><b style="color:'+VEGC+'">'+label+'</b>'+(cut>0?' — cuts solar heating '+cut+'%':'')+'</div>';
   }
-  h+='<div class="bd-note">Daylight gate: <b>'+Math.round(dayF*100)+'%</b> (sun '+(sun.alt>0?'+'+sun.alt.toFixed(0)+'° up':'below horizon')+')</div>';
-  // ---- SLOPE-SOARING face (terrain shape + wind model) ----
+  h+='<div class="bd-note">Daylight gate: <b>'+Math.round(dayF*100)+'%</b> (sun '+(sun.alt>0?'+'+sun.alt.toFixed(0)+'° up':'below horizon')+') · <i>steepness &amp; wind do not affect thermals</i></div>';
+  // ---- SLOPE-SOARING face (wind × geometry; sun plays no part) ----
   h+='<h4>⛰ Slope-soaring face <small>'+(A.slope[i]*100|0)+'/100</small></h4>';
   h+=bdRow('Faces the wind',align,TERR)+bdRow('Steepness fit ('+AC.slopeSweet+'°)',steep,TERR)+bdRow('Convex release',release,TERR);
   if(WF){
