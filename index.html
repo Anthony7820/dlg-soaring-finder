@@ -777,6 +777,23 @@ function sunPosition(lat, lon, month, hour){
   if(ha>0)az=2*Math.PI-az;
   return {alt:alt*deg, az:az*deg};
 }
+// Sun for a live-forecast hour, computed from TRUE local apparent solar time.
+// Open-Meteo gives local CLOCK time (timezone=auto); convert clock -> UTC (utc_offset) -> solar time
+// (+ longitude + equation-of-time) so the sun lines up with the forecast timestamp & the actual sky.
+function sunAtForecast(i){
+  if(!(windCache&&windCache.time&&windCache.time[i]!=null))
+    return sunPosition(...wxRef(), +month_.value, +hour_.value);   // manual fallback
+  const t=windCache.time[i];
+  const Y=+t.slice(0,4),Mo=+t.slice(5,7),D=+t.slice(8,10),H=+t.slice(11,13),Mi=+t.slice(14,16)||0;
+  const ref=wxRef(), lon=ref[1];
+  const offH=(windCache.utcOffset||0)/3600;                 // hours east of UTC for the forecast site
+  const utcH=(H+Mi/60)-offH;                                 // clock time -> UTC decimal hour
+  const doy=Math.floor((Date.UTC(Y,Mo-1,D)-Date.UTC(Y,0,0))/86400000);
+  const b=2*Math.PI*(doy-81)/364;
+  const eotH=(9.87*Math.sin(2*b)-7.53*Math.cos(b)-1.5*Math.sin(b))/60;  // equation of time (hours)
+  const solarHour=utcH + lon/15 + eotH;                     // local apparent solar time
+  return sunPosition(ref[0], ref[1], Mo, solarHour);
+}
 
 // Grid holder
 let G=null; // {z:Float32Array,w,h,dx,dy,bounds:L.latLngBounds, latC}
@@ -944,11 +961,12 @@ async function getWindForecast(lat,lon){
   const windVars='wind_speed_10m,wind_direction_10m,wind_gusts_10m,wind_speed_925hPa,wind_direction_925hPa';
   const convVars=',cape,cloud_cover_low,temperature_2m,dew_point_2m';
   const soarVars=',boundary_layer_height';            // thermal ceiling (mixing-layer depth)
-  let H=null;
-  try{ const r=await fetch(base+windVars+convVars+soarVars); if(r.ok) H=(await r.json()).hourly; }catch(e){}
-  if(!H){ try{ const r=await fetch(base+windVars+convVars); if(r.ok) H=(await r.json()).hourly; }catch(e){} } // drop soaring vars
-  if(!H){ const r=await fetch(base+windVars); if(!r.ok) throw new Error('wind HTTP '+(r&&r.status)); H=(await r.json()).hourly; } // wind only
-  const rec={fetchedAt:Date.now(),lat:latR,lon:lonR,time:H.time,
+  let J=null;
+  try{ const r=await fetch(base+windVars+convVars+soarVars); if(r.ok) J=await r.json(); }catch(e){}
+  if(!J){ try{ const r=await fetch(base+windVars+convVars); if(r.ok) J=await r.json(); }catch(e){} } // drop soaring vars
+  if(!J){ const r=await fetch(base+windVars); if(!r.ok) throw new Error('wind HTTP '+(r&&r.status)); J=await r.json(); } // wind only
+  const H=J.hourly;
+  const rec={fetchedAt:Date.now(),lat:latR,lon:lonR,utcOffset:(J.utc_offset_seconds||0),time:H.time,
     spd10:H.wind_speed_10m,dir10:H.wind_direction_10m,gust10:H.wind_gusts_10m,
     spd925:H.wind_speed_925hPa,dir925:H.wind_direction_925hPa,
     cape:H.cape,ccLow:H.cloud_cover_low,t2m:H.temperature_2m,td2m:H.dew_point_2m,blh:H.boundary_layer_height};
@@ -956,8 +974,11 @@ async function getWindForecast(lat,lon){
   windCache=rec; return rec;
 }
 function nearestHourIndex(times){
-  if(!times)return 0; const now=Date.now(); let best=0,bd=1e18;
-  for(let i=0;i<times.length;i++){const d=Math.abs(new Date(times[i]).getTime()-now); if(d<bd){bd=d;best=i;}}
+  if(!times)return 0; const now=Date.now(); const off=((windCache&&windCache.utcOffset)||0)*1000; let best=0,bd=1e18;
+  for(let i=0;i<times.length;i++){const t=times[i];
+    // forecast strings are the SITE's local wall-clock; build the true UTC instant via utc_offset
+    const utcMs=Date.UTC(+t.slice(0,4),+t.slice(5,7)-1,+t.slice(8,10),+t.slice(11,13),+t.slice(14,16)||0)-off;
+    const d=Math.abs(utcMs-now); if(d<bd){bd=d;best=i;}}
   return best;
 }
 // current wind {speed(m/s), fromDeg} from live cache+slider, else manual dial+speed
@@ -1012,8 +1033,7 @@ function updateSim(){
 // gate). This same scalar drives the strength label, the map dimming, and the "throw window".
 function thermalDay(i){
   if(!windCache||!windCache.time) return {idx:1,label:'—',why:'no live data',blh:null};
-  const t=windCache.time[i]||'', mo=(+t.slice(5,7))||7, hr=(+t.slice(11,13))||12;
-  const sun=sunPosition(...wxRef(),mo,hr);
+  const sun=sunAtForecast(i);
   if(sun.alt<=2) return {idx:0,label:'Dead 😴',why:'sun below the horizon',blh:null,sunAlt:sun.alt};
   const cc = windCache.ccLow&&Number.isFinite(windCache.ccLow[i])?windCache.ccLow[i]:30;
   const heatF = Math.max(0,Math.sin(sun.alt*Math.PI/180))*(1-cc/100);
@@ -1054,9 +1074,8 @@ function updateConditions(){
   const d10 = windCache.dir10&&Number.isFinite(windCache.dir10[i])?windCache.dir10[i]:null;
   const s925= windCache.spd925&&Number.isFinite(windCache.spd925[i])?windCache.spd925[i]:null;
   const d925= windCache.dir925&&Number.isFinite(windCache.dir925[i])?windCache.dir925[i]:null;
-  // sun at the forecast hour, over the map-view center
-  const t=windCache.time[i]||'', mo=(+t.slice(5,7))||7, hr=(+t.slice(11,13))||12;
-  const ref=wxRef(), sun=sunPosition(ref[0],ref[1],mo,hr);
+  // sun at the forecast hour (true solar time), over the map-view center
+  const sun=sunAtForecast(i);
   const td=thermalDay(i);
   const strength=td.label, why=td.why, dayIdx=td.idx;
   // colour the badge by the same warm thermal ramp the map uses
@@ -1125,8 +1144,7 @@ function renderThrowWindow(){
 // "Is it flyable right now?" — synthesize wind + gusts + daylight into a verdict + 12 h timeline
 function flyHour(i){
   const spd=windCache.spd10[i], gust=windCache.gust10&&windCache.gust10[i]!=null?windCache.gust10[i]:spd*1.4;
-  const t=windCache.time[i]||''; const hr=+t.slice(11,13)||12, mo=+t.slice(5,7)||7;
-  const sun=sunPosition(...wxRef(),mo,hr);
+  const sun=sunAtForecast(i);
   if(sun.alt<=0) return 0;                          // dark
   const mx=AC.windMax;                              // this aircraft's wind ceiling
   if(spd>mx||gust>mx+4) return 0.08;                // too windy for this ship
@@ -1223,7 +1241,12 @@ function computeBase(){
 // Light step: re-score from cached derivatives when wind / sun / month change
 function rescore(){
   if(!A||!G) return;
-  const sun=sunPosition(...wxRef(),+month_.value,+hour_.value);
+  // map sun: when live wind is on, use the SAME forecast hour (true solar time) so map & forecast agree
+  let sun;
+  if(document.getElementById('liveWind').checked && windCache && windCache.time){
+    const fi=Math.min(windCache.time.length-1,Math.max(0,+document.getElementById('fhour').value));
+    sun=sunAtForecast(fi);
+  } else { sun=sunPosition(...wxRef(),+month_.value,+hour_.value); }
   const n=G.w*G.h;
   const th=new Float32Array(n), sl=new Float32Array(n), cb=new Float32Array(n);
   const lift=new Float32Array(n), rot=new Float32Array(n);
@@ -1627,7 +1650,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.13-dev', APP_COMMIT='__COMMIT__';
+const APP_VERSION='v1.14-dev', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
