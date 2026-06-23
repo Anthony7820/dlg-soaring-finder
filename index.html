@@ -1789,19 +1789,23 @@ function loadVegTile(z,x,y){
   });
 }
 let vegSeq=0;
+const VEG_MIN_ZOOM=13;   // below this the imagery is too coarse — its greenness comes through as blocky tiles
 async function loadVegForG(){
   if(!G||!G.tiles||!vegAvailable||!document.getElementById('vegHeat').checked) return;
+  if(map.getZoom()<VEG_MIN_ZOOM) return;             // zoomed out: skip (keeps thermal = terrain + sun only)
   const myveg=++vegSeq, {z,x0,y0,nx,ny}=G.tiles, W=G.w,H=G.h;
   const veg=new Float32Array(W*H);
+  let anyFail=false;
   const jobs=[];
   for(let ty=0;ty<ny;ty++)for(let tx=0;tx<nx;tx++){
     jobs.push(loadVegTile(z,x0+tx,y0+ty).then(t=>{
-      if(!t)return; const ox=tx*256, oy=ty*256;
+      if(!t){ anyFail=true; return; } const ox=tx*256, oy=ty*256;
       for(let r=0;r<256;r++){const dst=(oy+r)*W+ox, src=r*256; for(let c=0;c<256;c++)veg[dst+c]=t[src+c];}
     }));
   }
   try{ await Promise.all(jobs);}catch(e){ return; }
-  if(myveg!==vegSeq || !A || !vegAvailable) return;   // superseded or no longer applicable
+  // all-or-nothing: a partial cover would paint tile-sized blocks where some tiles loaded and others didn't
+  if(myveg!==vegSeq || !A || !vegAvailable || anyFail) return;
   A.veg=veg; rescore();                                // refine scores with ground cover (cheap re-score)
 }
 let fetchSeq=0;
@@ -1913,7 +1917,10 @@ function scoreDeriv(slopeDeg,aspectDeg,tpi,sun,windFrom,mode,veg){
   const gentle=Math.exp(-((slopeDeg-12)**2)/(2*144));
   // thermals need sun: gate hard when it's below the horizon (dawn/dusk/night)
   const dayF = sun.alt>3 ? 1 : (sun.alt>0 ? 0.5 : 0.12);
-  const thermal=(0.6*insol+0.3*release+0.1*gentle)*dayF;
+  // a thermal TRIGGER needs terrain structure (a convex release or a slope), not just flat sun —
+  // otherwise flat valley floors & farm fields blanket the map. Gate the solar term on relief.
+  const struct = Math.max(release, Math.min(1, slopeDeg/14));   // 0 = flat, 1 = real feature
+  const thermal=(0.6*insol*(0.45+0.55*struct) + 0.3*release + 0.1*gentle)*dayF;
   let align=Math.max(0,Math.cos(aR-windFrom*Math.PI/180));
   const steep=Math.exp(-((slopeDeg-(typeof AC!=='undefined'?AC.slopeSweet:28))**2)/(2*144));
   let slope=align*(0.55*steep+0.45*release);
@@ -1940,7 +1947,9 @@ function explainCell(i){
   const steep=Math.exp(-((s-AC.slopeSweet)**2)/(2*144));
   const TERR='#7bc5ff', SUN='#ffd66b', MOD='#c08bff', HAZ='#ef5e6b', VEGC='#2fd49a';
   const veg=A.veg?A.veg[i]:null;
-  const insolEff = veg!=null ? insol*(1-VEG_W*Math.max(0,Math.min(1,veg))) : insol;
+  const struct=Math.max(release, Math.min(1, s/14));         // terrain-relief gate (matches scoreDeriv)
+  let insolEff = insol*(0.45+0.55*struct);
+  if(veg!=null) insolEff *= (1-VEG_W*Math.max(0,Math.min(1,veg)));
   // ---- THERMAL trigger (terrain + sun + ground cover) ----
   let h='<div class="bd"><h4>🔥 Thermal trigger <small>'+(A.thermal[i]*100|0)+'/100</small></h4>';
   h+=bdRow('Sun on face ×.6',insolEff,SUN)+bdRow('Convex release ×.3',release,TERR)+bdRow('Gentle ground ×.1',gentle,TERR);
