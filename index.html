@@ -528,8 +528,8 @@
           <input type="range" id="month" min="1" max="12" value="7"></label>
         <label class="row">Hour (solar) <span class="val" id="hrLbl">15:00</span>
           <input type="range" id="hour" min="6" max="20" value="15"></label>
-        <label class="row">Overlay opacity <span class="val" id="opLbl">70%</span>
-          <input type="range" id="op" min="0" max="100" value="70"></label>
+        <label class="row">Overlay opacity <span class="val" id="opLbl">85%</span>
+          <input type="range" id="op" min="0" max="100" value="85"></label>
         <label class="row" style="cursor:pointer" title="Use satellite imagery greenness so green/transpiring ground triggers weaker thermals than bare, sun-baked ground">
           <span>Vegetation heating <span class="sub">beta</span></span>
           <input type="checkbox" id="vegHeat" checked></label>
@@ -1140,8 +1140,8 @@ function lerpStops(stops,v){
   const i=Math.floor(t),f=t-i,a=stops[i],b=stops[Math.min(stops.length-1,i+1)];
   return [a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f,a[2]+(b[2]-a[2])*f];
 }
-function scoreColor(v){ // good=warm. poor(slate)->teal->green->yellow->orange
-  return lerpStops([[44,58,73],[51,170,119],[120,221,68],[253,221,68],[247,115,51]],v);
+function scoreColor(v){ // brighter, legible ramp: blue -> cyan -> green -> yellow -> orange
+  return lerpStops([[58,92,150],[40,182,196],[120,216,92],[251,216,70],[247,110,48]],v);
 }
 function hazardColor(v){ // danger ramp: slate->amber->red (for rotor/turbulence)
   return lerpStops([[44,58,73],[242,177,52],[239,94,107],[200,30,50]],v);
@@ -1158,8 +1158,8 @@ function renderOverlay(){
   for(let i=0;i<arr.length;i++){
     const v=arr[i];const[cr,cg,cb]=ramp(v);
     img.data[i*4]=cr;img.data[i*4+1]=cg;img.data[i*4+2]=cb;
-    // transparent where value low so base map shows through
-    img.data[i*4+3]=Math.round(Math.pow(v,0.7)*255*0.9);
+    // low ground stays clear (map shows through); mid/high ramps up fast so shading reads
+    img.data[i*4+3]= v<0.1 ? 0 : Math.round(Math.min(1,Math.pow(v,0.5))*255);
   }
   ctx.putImageData(img,0,0);
   if(overlay)map.removeLayer(overlay);
@@ -1468,7 +1468,7 @@ window.saveFlight=saveFlight; window.cancelLogFlight=cancelLogFlight; window.del
 // (protected by row-level-security policies — see SUPABASE_SCHEMA.sql).
 const SUPA_URL='https://xascgdvviwghsimdvhpz.supabase.co', SUPA_KEY='eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inhhc2NnZHZ2aXdnaHNpbWR2aHB6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTU5OTAsImV4cCI6MjA5NzM3MTk5MH0.LO9PggjvhA226sDh8r4nSVrSmR6_7W6IB2J5-Yvjiro';
 // version — APP_COMMIT is replaced with the deployed git SHA by the Netlify build step
-const APP_VERSION='v1.9', APP_COMMIT='1f404a3';
+const APP_VERSION='v1.10-dev', APP_COMMIT='__COMMIT__';
 function renderVersion(){ const el=document.getElementById('appver'); if(!el)return;
   const has=/^[0-9a-f]{7,40}$/i.test(APP_COMMIT), short=has?APP_COMMIT.slice(0,7):'dev';
   el.innerHTML='DLG Finder <b>'+APP_VERSION+'</b> · '+(has?'<a href="https://github.com/Anthony7820/dlg-soaring-finder/commit/'+APP_COMMIT+'" target="_blank" rel="noopener">'+short+'</a>':short);
